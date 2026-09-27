@@ -1,8 +1,3 @@
-import React from "react";
-
-export default function Tabs() {
-  return <div>Tabs</div>;
-}
 import * as React from "react"
 import * as TabsPrimitive from "@radix-ui/react-tabs"
 

@@ -1,8 +1,3 @@
-import React from "react";
-
-export default function Form() {
-  return <div>Form</div>;
-}
 "use client";
 import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
