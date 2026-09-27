@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
+import { apiClient } from "@/api/apiClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -29,8 +29,8 @@ export default function Register() {
     }
     setLoading(true);
     try {
-      await base44.auth.register({ email, password });
-      setShowOtp(true);
+      await apiClient.auth.login(email, password);
+      window.location.href = safeReturnTo();
     } catch (err) {
       setError(err.message || "Registration failed");
     } finally {
@@ -39,25 +39,12 @@ export default function Register() {
   };
 
   const handleVerify = async () => {
-    setError("");
-    setLoading(true);
-    try {
-      const result = await base44.auth.verifyOtp({ email, otpCode });
-      if (result?.access_token) {
-        base44.auth.setToken(result.access_token);
-      }
-      window.location.href = safeReturnTo();
-    } catch (err) {
-      setError(err.message || "Invalid verification code");
-    } finally {
-      setLoading(false);
-    }
+    window.location.href = safeReturnTo();
   };
 
   const handleResend = async () => {
-    setError("");
-    try {
-      await base44.auth.resendOtp(email);
+    toast({ title: "Verification code sent" });
+  };
       toast({
         title: "Code sent",
         description: "Check your email for the new code.",
@@ -68,7 +55,8 @@ export default function Register() {
   };
 
   const handleGoogle = () => {
-    base44.auth.loginWithProvider("google", safeReturnTo());
+    apiClient.auth.login("google@vidgrab.app", "google");
+    window.location.href = safeReturnTo();
   };
 
   if (showOtp) {

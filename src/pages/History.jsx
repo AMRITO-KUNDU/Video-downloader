@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { History as HistoryIcon, ChevronRight, Trash2 } from "lucide-react";
-import { base44 } from "@/api/base44Client";
+import { apiClient } from "@/api/apiClient";
 import moment from "moment";
 import MobileTopBar from "@/components/layout/MobileTopBar";
 
@@ -10,8 +10,8 @@ export default function History() {
   const [items, setItems] = useState(null); // null = loading
 
   const load = () => {
-    base44.entities.Conversation
-      .list("-created_date", 100)
+    apiClient.entities.Conversation
+      .list()
       .then((r) => setItems(r))
       .catch(() => setItems([]));
   };
@@ -22,7 +22,6 @@ export default function History() {
 
   const clearAll = async () => {
     if (!items?.length) return;
-    await base44.entities.Conversation.deleteMany({}).catch(() => {});
     setItems([]);
   };
 

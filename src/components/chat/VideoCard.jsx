@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Image } from "@/components/ui/image";
 import { Eye, Calendar, Clock, Play, Download, Bookmark } from "lucide-react";
 import PlayerModal from "@/components/chat/PlayerModal";
-import { base44 } from "@/api/base44Client";
+import { apiClient } from "@/api/apiClient";
 import { useToast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -17,7 +17,7 @@ export default function VideoCard({ video }) {
     if (saved) return;
     setSaved(true);
     try {
-      await base44.entities.SavedVideo.create({
+      await apiClient.entities.SavedVideo.create({
         video_id: video.videoId,
         title: video.title,
         channel: video.channel,

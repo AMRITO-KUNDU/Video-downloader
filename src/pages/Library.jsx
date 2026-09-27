@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Play, Trash2, Bookmark, ExternalLink } from "lucide-react";
 import { Image } from "@/components/ui/image";
-import { base44 } from "@/api/base44Client";
+import { apiClient } from "@/api/apiClient";
 import MobileTopBar from "@/components/layout/MobileTopBar";
 import PlayerModal from "@/components/chat/PlayerModal";
 import moment from "moment";
@@ -11,8 +11,8 @@ export default function Library() {
   const [playItem, setPlayItem] = useState(null);
 
   const load = () => {
-    base44.entities.SavedVideo
-      .list("-created_date", 100)
+    apiClient.entities.SavedVideo
+      .list()
       .then((r) => setItems(r))
       .catch(() => setItems([]));
   };
@@ -23,7 +23,7 @@ export default function Library() {
 
   const remove = async (id) => {
     setItems((prev) => (prev ? prev.filter((i) => i.id !== id) : prev));
-    await base44.entities.SavedVideo.delete(id).catch(() => {});
+    await apiClient.entities.SavedVideo.delete(id).catch(() => {});
   };
 
   return (

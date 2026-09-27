@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Sparkles } from "lucide-react";
-import { base44 } from "@/api/base44Client";
+import { apiClient } from "@/api/apiClient";
 import MobileTopBar from "@/components/layout/MobileTopBar";
 import Composer from "@/components/chat/Composer";
 import SuggestionChips from "@/components/chat/SuggestionChips";
@@ -29,7 +29,7 @@ export default function Chat() {
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
 
   const saveConversation = (payload) => {
-    base44.entities.Conversation.create(payload).catch(() => {});
+    apiClient.entities.Conversation.create(payload).catch(() => {});
   };
 
   const handleSend = async (text) => {

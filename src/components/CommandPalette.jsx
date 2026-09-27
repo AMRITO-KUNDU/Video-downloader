@@ -8,7 +8,7 @@ import {
   CommandGroup,
   CommandItem,
 } from "@/components/ui/command";
-import { base44 } from "@/api/base44Client";
+import { apiClient } from "@/api/apiClient";
 import {
   Search,
   Library,
@@ -25,8 +25,8 @@ export default function CommandPalette({ open, onOpenChange }) {
   useEffect(() => {
     if (open) {
       setValue("");
-      base44.entities.Conversation
-        .list("-created_date", 6)
+      apiClient.entities.Conversation
+        .list()
         .then(setRecent)
         .catch(() => setRecent([]));
     }

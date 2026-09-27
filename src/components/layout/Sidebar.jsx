@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { Plus, MessageSquare, Library, History, Settings, Search, Download } from "lucide-react";
 import Logo from "@/components/Logo";
-import { base44 } from "@/api/base44Client";
+import { apiClient } from "@/api/apiClient";
 import { useAuth } from "@/lib/AuthContext";
 import { cn } from "@/lib/utils";
 
@@ -20,7 +20,7 @@ export default function Sidebar({ onNewSearch }) {
   const [recent, setRecent] = useState([]);
 
   useEffect(() => {
-    base44.entities.Conversation.list("-created_date", 6).then(setRecent).catch(() => {});
+    apiClient.entities.Conversation.list().then(setRecent).catch(() => {});
   }, []);
 
   const name = user?.full_name || (user?.email ? user.email.split("@")[0] : "Guest");
