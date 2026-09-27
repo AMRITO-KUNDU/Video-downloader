@@ -23,9 +23,15 @@ function Toggle({ on, onClick }) {
 }
 
 export default function Settings() {
-  const [s, setS] = useState({ notifications: true, darkThumbs: true });
+  const [s, setS] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("vg_settings")) || { notifications: true, darkThumbs: true }; } catch { return { notifications: true, darkThumbs: true }; }
+  });
   const { user, logout } = useAuth();
-  const toggle = (k) => setS((p) => ({ ...p, [k]: !p[k] }));
+  const toggle = (k) => setS((p) => {
+    const next = { ...p, [k]: !p[k] };
+    localStorage.setItem("vg_settings", JSON.stringify(next));
+    return next;
+  });
 
   const name = user?.full_name || (user?.email ? user.email.split("@")[0] : "Guest");
   const initials = (name[0] || "G").toUpperCase();

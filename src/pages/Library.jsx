@@ -67,7 +67,7 @@ export default function Library() {
                     <h3 className="truncate font-display text-sm font-extrabold leading-tight">{item.title}</h3>
                     <div className="mt-0.5 truncate text-xs font-bold text-black/60">{item.channel}</div>
                     <div className="mt-1 text-[11px] font-medium text-black/45">
-                      {moment(item.created_date).fromNow()}
+                      {moment(item.createdAt || item.created_date).fromNow()}
                     </div>
                     <div className="mt-auto flex items-center gap-2 pt-2">
                       <button onClick={() => setPlayItem(item)} className="nb-btn flex-1 px-2 py-1.5 text-[11px]">

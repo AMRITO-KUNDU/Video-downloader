@@ -12,7 +12,13 @@ VidGrab 2.0 is a standalone AI video search & downloader web application powered
 
 ### Local Development
 ```bash
-# Start frontend dev server
+# Install dependencies
+npm install
+
+# In terminal 1: start the API (requires yt-dlp and ffmpeg on PATH)
+npm start
+
+# In terminal 2: start the frontend; /api calls are proxied to port 10000
 npm run dev
 ```
 
@@ -24,6 +30,10 @@ npm run build
 # Start backend server
 npm start
 ```
+
+The production server exposes `/api/search`, `/api/info`, `/api/download`, and
+`/api/stream`. Downloads are processed on the server with yt-dlp and ffmpeg;
+the browser never receives a raw extractor URL.
 
 ### Docker Deployment
 ```bash

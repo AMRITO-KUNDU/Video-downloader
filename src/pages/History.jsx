@@ -22,6 +22,7 @@ export default function History() {
 
   const clearAll = async () => {
     if (!items?.length) return;
+    await Promise.all(items.map((item) => apiClient.entities.Conversation.delete(item.id)));
     setItems([]);
   };
 
@@ -77,7 +78,7 @@ export default function History() {
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-display text-base font-extrabold">"{h.query}"</div>
                   <div className="mt-0.5 text-xs font-semibold text-black/55">
-                    {moment(h.created_date).fromNow()} • {h.results_count || 0} results
+                    {moment(h.createdAt || h.created_date).fromNow()} • {h.results_count || 0} results
                   </div>
                 </div>
                 <ChevronRight className="h-5 w-5 shrink-0 text-black/40" strokeWidth={2.5} />

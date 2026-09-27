@@ -32,11 +32,26 @@ export function parseMinutesFilter(query) {
 export async function fetchVideoInfo(url) {
   const ytId = extractYouTubeId(url);
 
+  // 1. Try backend /api/info (uses yt-dlp)
   try {
-    // Fetch video info via noembed oEmbed service
+    const res = await fetch(`/api/info?url=${encodeURIComponent(url)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.title) {
+        return {
+          ...data,
+          seconds: parseDuration(data.duration),
+        };
+      }
+    }
+  } catch (err) {
+    console.warn("Backend /api/info unavailable, falling back to oEmbed:", err);
+  }
+
+  // 2. Fallback to public oEmbed
+  try {
     const res = await fetch(`https://noembed.com/embed?url=${encodeURIComponent(url)}`);
     const data = await res.json();
-
     if (data && data.title) {
       return {
         title: data.title,
@@ -51,7 +66,7 @@ export async function fetchVideoInfo(url) {
       };
     }
   } catch (err) {
-    console.warn("oEmbed lookup failed, falling back to basic details:", err);
+    console.warn("oEmbed lookup failed:", err);
   }
 
   if (ytId) {
@@ -72,20 +87,18 @@ export async function fetchVideoInfo(url) {
 }
 
 export async function searchYouTube(query) {
-  return [
-    {
-      id: "dQw4w9WgXcQ",
-      title: `${query} - Sample Video`,
-      channel: "VidGrab Featured",
-      views: "1.2M views",
-      uploadDate: "2 weeks ago",
-      duration: "3:33",
-      seconds: 213,
-      videoId: "dQw4w9WgXcQ",
-      url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-      thumbnail: ytThumb("dQw4w9WgXcQ"),
+  // 1. Try backend /api/search (uses yt-dlp ytsearch8)
+  try {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.videos)) return data.videos;
     }
-  ];
+  } catch (err) {
+    console.warn("Backend /api/search unavailable:", err);
+  }
+
+  throw new Error("Search service is unavailable. Start the VidGrab server and try again.");
 }
 
 export async function downloadVideo({ url, format = "mp4", quality = "720p" }) {

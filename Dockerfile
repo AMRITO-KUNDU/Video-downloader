@@ -32,4 +32,4 @@ ENV PORT=10000
 EXPOSE 10000
 
 # Run host bound on 0.0.0.0 for Render external web routing
-CMD ["sh", "-c", "npx vite preview --host 0.0.0.0 --port ${PORT:-10000}"]
+CMD ["node", "server.js"]

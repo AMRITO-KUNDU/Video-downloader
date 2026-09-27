@@ -29,7 +29,9 @@ export const apiClient = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url, format, quality }),
     });
-    return response.json();
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Download request failed");
+    return data;
   },
 
   // Local storage based entity repositories
@@ -40,7 +42,7 @@ export const apiClient = {
       },
       async create(data) {
         const items = getStorage("vg_saved_videos", []);
-        const newItem = { id: `sv_${Date.now()}`, createdAt: new Date().toISOString(), ...data };
+        const newItem = { id: `sv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, createdAt: new Date().toISOString(), ...data };
         items.unshift(newItem);
         setStorage("vg_saved_videos", items);
         return newItem;
@@ -58,7 +60,7 @@ export const apiClient = {
       },
       async create(data) {
         const items = getStorage("vg_conversations", []);
-        const newItem = { id: `conv_${Date.now()}`, createdAt: new Date().toISOString(), ...data };
+        const newItem = { id: `conv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, createdAt: new Date().toISOString(), ...data };
         items.unshift(newItem);
         setStorage("vg_conversations", items);
         return newItem;
