@@ -1,23 +1,35 @@
-FROM node:20-alpine
+# Multi-stage Dockerfile optimized for Render web service deployment
+FROM node:20-slim
 
-# yt-dlp needs Python; ffmpeg is required to merge separate video/audio streams.
-RUN apk add --no-cache python3 py3-pip ffmpeg \
-  && pip3 install --no-cache-dir --break-system-packages yt-dlp
+# Install system runtime dependencies: python3, ffmpeg, ca-certificates & yt-dlp binary
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    ffmpeg \
+    curl \
+    ca-certificates \
+    && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
+    && chmod a+rx /usr/local/bin/yt-dlp \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
+# Set working directory
 WORKDIR /app
 
+# Copy package descriptors
 COPY package*.json ./
-RUN npm install --omit=dev
 
-COPY frontend/package*.json ./frontend/
-RUN npm install --prefix frontend
+# Install application dependencies
+RUN npm install
 
+# Copy application source
 COPY . .
+
+# Build production bundle
 RUN npm run build
 
-ENV NODE_ENV=production
+# Render sets PORT dynamically (defaults to 10000)
 ENV PORT=10000
-
 EXPOSE 10000
 
-CMD ["npm", "start"]
+# Run host bound on 0.0.0.0 for Render external web routing
+CMD ["sh", "-c", "npx vite preview --host 0.0.0.0 --port ${PORT:-10000}"]

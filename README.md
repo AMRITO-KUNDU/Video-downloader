@@ -1,51 +1,62 @@
-# StreamFetch
+# Base44 Project
 
-A small, Render-friendly YouTube downloader with the same calm workspace UI as the Image Background Remover project.
+Use this repository to run and edit the app locally, then publish changes back through Base44.
 
-## What it includes
+Any change pushed to the repo will also be reflected in the Base44 Builder.
 
-- React + Vite frontend with light/dark mode, responsive layout, URL validation, metadata preview, quality cards, and download state.
-- Express API with `yt-dlp` metadata extraction and temporary-file downloads.
-- MP4 quality presets: best available, 1080p, 720p, 480p, plus M4A audio-only.
-- Docker image includes both `yt-dlp` and `ffmpeg`, which are required for merged video/audio streams.
-- 450 MB download cap and automatic temporary-file cleanup for Render’s free tier.
+## Prerequisites
 
-## Run locally
+1. Clone the repository using the project's Git URL.
+2. Navigate to the project directory.
+3. Install dependencies: `npm install`.
+4. Install the Base44 CLI: `npm install -g base44@latest`.
+5. Install [Deno](https://docs.deno.com/runtime/getting_started/installation/) — the local Base44 backend runs on it.
 
-```bash
-npm install
-npm --prefix frontend install
-npm run build
-npm start
-```
+Run `base44 --help` (or see the [CLI reference](https://docs.base44.com/developers/references/cli/commands/introduction)) for the full command surface.
 
-Open `http://localhost:10000`.
+## Run Locally
 
-## Docker / Render
-
-The included Dockerfile installs Node 20, Python, `yt-dlp`, and `ffmpeg`, builds the frontend, and starts the Express server on Render’s `$PORT` (default `10000`).
+Three commands, from the project root:
 
 ```bash
-docker build -t streamfetch .
-docker run --rm -p 10000:10000 streamfetch
+base44 login   # one-time per machine
+base44 link    # one-time per clone
+base44 dev     # local backend + frontend together
 ```
 
-For Render, create a Web Service using the Docker runtime. No separate build or start command is needed; the Dockerfile handles both. Render should discover the service on port `10000` through the `PORT` environment variable.
+Open the frontend URL that `base44 dev` prints (typically `http://localhost:5173`).
 
-## API
+Notes:
 
-`POST /api/video-info`
+- **Every fresh clone needs `base44 link`.** It writes `base44/.app.jsonc` (the app-id pointer), which is deliberately gitignored. Your app id is in the Builder URL (`app.base44.com/apps/<id>/...`); `base44 link --help` shows the non-interactive flags.
+- **`base44 dev` runs the frontend for you** (via `site.serveCommand` in this repo's `base44/config.jsonc`) — never run `npm run dev` yourself: alone it serves a UI with no backend behind it (`[base44] Proxy not enabled`, every `/api` call fails), and alongside `base44 dev` the second Vite silently takes the next port and you end up looking at the wrong one.
+- **The app must be published at least once for the UI to load under `base44 dev`.** The frontend boots by fetching app settings from the hosted app; before the first publish that fails and every page redirects to login. The local API works regardless.
+- Entities, functions, and auth run locally — entity data is **in-memory only**, wiped when `base44 dev` restarts. Everything else (Core integrations, OAuth login) is forwarded to your deployed app. Full breakdown: [Local development overview](https://docs.base44.com/developers/backend/overview/local-dev/local-development-overview).
 
-```json
-{ "url": "https://www.youtube.com/watch?v=..." }
+## Frontend Only, Hosted Backend
+
+To work on just the frontend against your app's live hosted backend:
+
+```bash
+base44 dev --remote
 ```
 
-`POST /api/download`
+⚠️ In this mode writes go to your app's **production data** — plain `base44 dev` keeps everything local.
 
-```json
-{ "url": "https://www.youtube.com/watch?v=...", "format": "720p" }
+## Publish Your Changes
+
+After pushing your changes to git, open the Base44 dashboard and publish the app:
+
+```bash
+base44 dashboard open
 ```
 
-Allowed formats are `best`, `1080p`, `720p`, `480p`, and `audio`.
+This repo syncs to Base44 through git, so publish from the dashboard rather than `base44 deploy` — a CLI deploy ships your local tree directly, bypassing the sync, and the deployed state silently diverges from the repo.
 
-Use this only for content you have permission to download and in accordance with YouTube’s terms.
+## Docs & Support
+
+GitHub integration: [https://docs.base44.com/developers/app-code/local-development/github](https://docs.base44.com/developers/app-code/local-development/github)
+
+Local development: [https://docs.base44.com/developers/backend/overview/local-dev/local-development-overview](https://docs.base44.com/developers/backend/overview/local-dev/local-development-overview)
+
+Support: [https://app.base44.com/support](https://app.base44.com/support)

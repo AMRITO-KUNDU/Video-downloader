@@ -1,0 +1,54 @@
+{
+  "properties": {
+    "query": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "search",
+        "link",
+        "filter"
+      ],
+      "default": "search"
+    },
+    "reply": {
+      "type": "string"
+    },
+    "results_count": {
+      "type": "number",
+      "default": 0
+    },
+    "video_id": {
+      "type": "string"
+    },
+    "video_title": {
+      "type": "string"
+    },
+    "video_thumbnail": {
+      "type": "string"
+    },
+    "video_channel": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "query"
+  ],
+  "name": "Conversation",
+  "type": "object",
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}
