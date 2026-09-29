@@ -40,7 +40,7 @@ export async function fetchVideoInfo(url) {
       if (data && data.title) {
         return {
           ...data,
-          seconds: parseDuration(data.duration),
+          seconds: typeof data.seconds === "number" ? data.seconds : parseDuration(data.duration),
         };
       }
     }
@@ -57,12 +57,12 @@ export async function fetchVideoInfo(url) {
         title: data.title,
         channel: data.author_name || "YouTube Creator",
         views: "—",
-        uploadDate: "Recently",
-        duration: "3:45",
-        seconds: 225,
+        uploadDate: "—",
+        duration: "—",
+        seconds: 0,
         url,
         videoId: ytId,
-        thumbnail: ytId ? ytThumb(ytId) : data.thumbnail_url,
+        thumbnail: ytId ? ytThumb(ytId) : data.thumbnail_url || null,
       };
     }
   } catch (err) {

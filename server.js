@@ -45,7 +45,14 @@ app.get("/api/search", async (req, res) => {
   try {
     const { stdout } = await execFileAsync(
       "yt-dlp",
-      ["--flat-playlist", "--dump-json", `ytsearch8:${query}`],
+      [
+        "--no-warnings",
+        "--socket-timeout", "30",
+        "--retries", "5",
+        "--flat-playlist",
+        "--dump-json",
+        `ytsearch8:${query}`
+      ],
       { maxBuffer: 10 * 1024 * 1024 }
     );
 
@@ -94,7 +101,14 @@ app.get("/api/info", async (req, res) => {
   try {
     const { stdout } = await execFileAsync(
       "yt-dlp",
-      ["--dump-json", "--no-playlist", videoUrl],
+      [
+        "--no-warnings",
+        "--socket-timeout", "30",
+        "--retries", "5",
+        "--dump-json",
+        "--no-playlist",
+        videoUrl
+      ],
       { maxBuffer: 10 * 1024 * 1024 }
     );
 
@@ -148,50 +162,78 @@ app.get("/api/stream", (req, res) => {
   if (!["mp4", "mp3"].includes(format)) return res.status(400).send("Unsupported format");
   if (format === "mp4" && !QUALITY_HEIGHTS.has(quality)) return res.status(400).send("Unsupported quality");
 
-  const maxFormatHeight = parseInt(quality, 10) || 720;
-
-  let formatArg = `bestvideo[height<=${maxFormatHeight}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${maxFormatHeight}][ext=mp4]/best`;
-  let contentType = "video/mp4";
-  let extension = "mp4";
-
+  const maxHeight = parseInt(quality, 10) || 720;
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "vidgrab-"));
   const outputTemplate = path.join(tempDir, "download.%(ext)s");
   let downloadComplete = false;
-  const args = ["--no-playlist", "--quiet", "--no-warnings", "-o", outputTemplate, "-f", formatArg];
-  if (format === "mp4") args.splice(2, 0, "--merge-output-format", "mp4");
+  let stderrOutput = "";
+
+  let args = [];
+  let contentType = "video/mp4";
+  let extension = "mp4";
+
   if (format === "mp3") {
-    formatArg = "bestaudio/best";
-    args[args.indexOf("-f") + 1] = formatArg;
-    args.splice(2, 0, "--extract-audio", "--audio-format", "mp3");
     contentType = "audio/mpeg";
     extension = "mp3";
+    args = [
+      "-x",
+      "--audio-format", "mp3",
+      "--audio-quality", "0",
+      "--no-playlist",
+      "--no-warnings",
+      "--socket-timeout", "30",
+      "--retries", "10",
+      "--extractor-args", "youtube:player_client=web,mweb,android",
+      "-o", outputTemplate,
+      url
+    ];
+  } else {
+    const formatStr = `bv*[height<=${maxHeight}]+ba/b[height<=${maxHeight}]`;
+    args = [
+      "-f", formatStr,
+      "--merge-output-format", "mp4",
+      "--no-playlist",
+      "--no-warnings",
+      "--socket-timeout", "30",
+      "--retries", "10",
+      "--fragment-retries", "10",
+      "--extractor-args", "youtube:player_client=web,mweb,android",
+      "-o", outputTemplate,
+      url
+    ];
   }
 
-  args.push(url);
   const ytDlpProcess = spawn("yt-dlp", args);
 
   ytDlpProcess.stderr.on("data", (data) => {
-    console.log("yt-dlp stream log:", data.toString());
+    const str = data.toString();
+    stderrOutput += str;
+    console.error("[yt-dlp stderr]:", str.trim());
   });
 
   ytDlpProcess.on("error", (err) => {
-    console.error("yt-dlp process error:", err);
+    console.error("yt-dlp process spawn error:", err);
+    fs.rmSync(tempDir, { recursive: true, force: true });
     if (!res.headersSent) {
-      res.status(500).send("Failed to start download stream");
+      res.status(500).send(`Failed to start yt-dlp process: ${err.message}`);
     }
   });
 
   ytDlpProcess.on("close", (code) => {
     if (code !== 0) {
       fs.rmSync(tempDir, { recursive: true, force: true });
-      if (!res.headersSent) res.status(502).send("yt-dlp could not download this video");
+      if (!res.headersSent) {
+        res.status(502).send(`yt-dlp download failed with exit code ${code}: ${stderrOutput.slice(-300) || "Unknown error"}`);
+      }
       return;
     }
 
     const file = fs.readdirSync(tempDir).find((name) => name.endsWith(`.${extension}`));
     if (!file) {
       fs.rmSync(tempDir, { recursive: true, force: true });
-      if (!res.headersSent) res.status(502).send("yt-dlp did not produce a downloadable file");
+      if (!res.headersSent) {
+        res.status(502).send("yt-dlp completed but output file was not found");
+      }
       return;
     }
 
@@ -200,14 +242,23 @@ app.get("/api/stream", (req, res) => {
     res.setHeader("Content-Disposition", `attachment; filename="vidgrab_${Date.now()}.${extension}"`);
     res.setHeader("Content-Type", contentType);
     res.setHeader("Content-Length", fs.statSync(filePath).size);
+
     const stream = fs.createReadStream(filePath);
-    stream.on("close", () => fs.rmSync(tempDir, { recursive: true, force: true }));
+    stream.on("close", () => {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+    stream.on("error", (streamErr) => {
+      console.error("File stream error:", streamErr);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    });
     stream.pipe(res);
   });
 
   req.on("close", () => {
-    if (!downloadComplete && !res.writableEnded && !ytDlpProcess.killed) {
-      ytDlpProcess.kill();
+    if (!downloadComplete && !res.writableEnded) {
+      if (!ytDlpProcess.killed) {
+        ytDlpProcess.kill("SIGTERM");
+      }
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
