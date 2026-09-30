@@ -57,8 +57,8 @@ function durationLabel(seconds) {
   const mins = Math.floor((total % 3600) / 60);
   const secs = total % 60;
   return hours
-    ? `\( {hours}: \){String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`
-    : `\( {mins}: \){String(secs).padStart(2, "0")}`;
+    ? `${hours}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`
+    : `${mins}:${String(secs).padStart(2, "0")}`;
 }
 
 function getYtDlpBaseArgs() {
@@ -174,7 +174,7 @@ app.post("/api/download", (req, res) => {
   if (format === "mp4" && !QUALITY_HEIGHTS.has(quality))
     return res.status(400).json({ success: false, error: "Unsupported quality" });
 
-  const streamUrl = `/api/stream?url=\( {encodeURIComponent(url)}&format= \){format}&quality=${quality}`;
+  const streamUrl = `/api/stream?url=${encodeURIComponent(url)}&format=${format}&quality=${quality}`;
   return res.json({ success: true, url: streamUrl, format, quality });
 });
 
@@ -210,7 +210,7 @@ app.get("/api/stream", (req, res) => {
     );
   } else {
     args.push(
-      "-f", `bv*[height<=\( {maxHeight}]+ba/b[height<= \){maxHeight}]`,
+      "-f", `bv*[height<=${maxHeight}]+ba/b[height<=${maxHeight}]`,
       "--merge-output-format", "mp4",
       "--no-playlist",
       "--fragment-retries", "10",
@@ -251,7 +251,7 @@ app.get("/api/stream", (req, res) => {
     const filePath = path.join(tempDir, file);
     downloadComplete = true;
 
-    res.setHeader("Content-Disposition", `attachment; filename="vidgrab_\( {Date.now()}. \){extension}"`);
+    res.setHeader("Content-Disposition", `attachment; filename="vidgrab_${Date.now()}.${extension}"`);
     res.setHeader("Content-Type", contentType);
     res.setHeader("Content-Length", fs.statSync(filePath).size);
 
