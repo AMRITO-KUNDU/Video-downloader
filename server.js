@@ -10,6 +10,8 @@ const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const COOKIES_PATH = process.env.YTDLP_COOKIES || null;
+
 const app = express();
 app.use(express.json());
 
@@ -34,10 +36,12 @@ function durationLabel(seconds) {
   const hours = Math.floor(total / 3600);
   const mins = Math.floor((total % 3600) / 60);
   const secs = total % 60;
-  return hours ? `${hours}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}` : `${mins}:${String(secs).padStart(2, "0")}`;
+  return hours
+    ? `${hours}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`
+    : `${mins}:${String(secs).padStart(2, "0")}`;
 }
 
-function getBaseYtDlpArgs() {
+function getYtDlpBaseArgs() {
   const args = [
     "-4",
     "--extractor-args", "youtube:player_client=android,web,mweb",
@@ -45,10 +49,8 @@ function getBaseYtDlpArgs() {
     "--socket-timeout", "30",
     "--retries", "10"
   ];
-  const cookiesPath = process.env.YTDLP_COOKIES || "/app/cookies.txt";
-  if (fs.existsSync(cookiesPath)) {
-    console.log(`[yt-dlp] Using cookies file: ${cookiesPath}`);
-    args.push("--cookies", cookiesPath);
+  if (COOKIES_PATH && fs.existsSync(COOKIES_PATH)) {
+    args.push("--cookies", COOKIES_PATH);
   }
   return args;
 }
@@ -60,7 +62,7 @@ app.get("/api/search", async (req, res) => {
 
   try {
     const args = [
-      ...getBaseYtDlpArgs(),
+      ...getYtDlpBaseArgs(),
       "--flat-playlist",
       "--dump-json",
       `ytsearch8:${query}`
@@ -107,11 +109,12 @@ app.get("/api/search", async (req, res) => {
 app.get("/api/info", async (req, res) => {
   const videoUrl = req.query.url;
   if (!videoUrl) return res.status(400).json({ error: "URL parameter required" });
-  if (!validateVideoUrl(videoUrl)) return res.status(400).json({ error: "Only public YouTube and Facebook URLs are supported" });
+  if (!validateVideoUrl(videoUrl))
+    return res.status(400).json({ error: "Only public YouTube and Facebook URLs are supported" });
 
   try {
     const args = [
-      ...getBaseYtDlpArgs(),
+      ...getYtDlpBaseArgs(),
       "--dump-json",
       "--no-playlist",
       videoUrl
@@ -120,7 +123,6 @@ app.get("/api/info", async (req, res) => {
 
     const item = JSON.parse(stdout);
     const durationSec = item.duration || 0;
-    const durStr = durationLabel(durationSec);
     const vId = item.id;
 
     res.json({
@@ -128,7 +130,7 @@ app.get("/api/info", async (req, res) => {
       channel: item.uploader || item.channel || "YouTube",
       views: item.view_count ? `${item.view_count.toLocaleString()} views` : "—",
       uploadDate: item.upload_date || "—",
-      duration: durStr,
+      duration: durationLabel(durationSec),
       seconds: durationSec,
       url: videoUrl,
       videoId: vId,
@@ -140,30 +142,26 @@ app.get("/api/info", async (req, res) => {
   }
 });
 
-// API: Download info endpoint
+// API: Download info endpoint – returns a /api/stream URL the browser will follow
 app.post("/api/download", (req, res) => {
   const { url, format = "mp4", quality = "720p" } = req.body || {};
   if (!url) return res.status(400).json({ success: false, error: "URL is required" });
-  if (!validateVideoUrl(url)) return res.status(400).json({ success: false, error: "Only public YouTube and Facebook URLs are supported" });
-  if (!["mp4", "mp3"].includes(format)) return res.status(400).json({ success: false, error: "Unsupported format" });
-  if (format === "mp4" && !QUALITY_HEIGHTS.has(quality)) return res.status(400).json({ success: false, error: "Unsupported quality" });
+  if (!validateVideoUrl(url))
+    return res.status(400).json({ success: false, error: "Only public YouTube and Facebook URLs are supported" });
+  if (!["mp4", "mp3"].includes(format))
+    return res.status(400).json({ success: false, error: "Unsupported format" });
+  if (format === "mp4" && !QUALITY_HEIGHTS.has(quality))
+    return res.status(400).json({ success: false, error: "Unsupported quality" });
 
   const streamUrl = `/api/stream?url=${encodeURIComponent(url)}&format=${format}&quality=${quality}`;
-  return res.json({
-    success: true,
-    url: streamUrl,
-    format,
-    quality,
-  });
+  return res.json({ success: true, url: streamUrl, format, quality });
 });
 
 // API: Direct binary download stream via yt-dlp
 app.get("/api/stream", (req, res) => {
   const { url, format = "mp4", quality = "720p" } = req.query;
 
-  if (!url) {
-    return res.status(400).send("URL parameter is required");
-  }
+  if (!url) return res.status(400).send("URL parameter is required");
   if (!validateVideoUrl(url)) return res.status(400).send("Only public YouTube and Facebook URLs are supported");
   if (!["mp4", "mp3"].includes(format)) return res.status(400).send("Unsupported format");
   if (format === "mp4" && !QUALITY_HEIGHTS.has(quality)) return res.status(400).send("Unsupported quality");
@@ -174,9 +172,9 @@ app.get("/api/stream", (req, res) => {
   let downloadComplete = false;
   let stderrOutput = "";
 
-  let args = getBaseYtDlpArgs();
   let contentType = "video/mp4";
   let extension = "mp4";
+  const args = getYtDlpBaseArgs();
 
   if (format === "mp3") {
     contentType = "audio/mpeg";
@@ -190,9 +188,8 @@ app.get("/api/stream", (req, res) => {
       url
     );
   } else {
-    const formatStr = `bv*[height<=${maxHeight}]+ba/b[height<=${maxHeight}]`;
     args.push(
-      "-f", formatStr,
+      "-f", `bv*[height<=${maxHeight}]+ba/b[height<=${maxHeight}]`,
       "--merge-output-format", "mp4",
       "--no-playlist",
       "--fragment-retries", "10",
@@ -210,43 +207,37 @@ app.get("/api/stream", (req, res) => {
   });
 
   ytDlpProcess.on("error", (err) => {
-    console.error("yt-dlp process spawn error:", err);
+    console.error("yt-dlp spawn error:", err);
     fs.rmSync(tempDir, { recursive: true, force: true });
-    if (!res.headersSent) {
-      res.status(500).send(`Failed to start yt-dlp process: ${err.message}`);
-    }
+    if (!res.headersSent) res.status(500).send(`Failed to start yt-dlp: ${err.message}`);
   });
 
   ytDlpProcess.on("close", (code) => {
     if (code !== 0) {
       fs.rmSync(tempDir, { recursive: true, force: true });
-      if (!res.headersSent) {
-        res.status(502).send(`yt-dlp download failed with exit code ${code}: ${stderrOutput.slice(-300) || "Unknown error"}`);
-      }
+      if (!res.headersSent)
+        res.status(502).send(`yt-dlp failed (exit ${code}): ${stderrOutput.slice(-400) || "Unknown error"}`);
       return;
     }
 
     const file = fs.readdirSync(tempDir).find((name) => name.endsWith(`.${extension}`));
     if (!file) {
       fs.rmSync(tempDir, { recursive: true, force: true });
-      if (!res.headersSent) {
-        res.status(502).send("yt-dlp completed but output file was not found");
-      }
+      if (!res.headersSent) res.status(502).send("yt-dlp finished but no output file found");
       return;
     }
 
     const filePath = path.join(tempDir, file);
     downloadComplete = true;
+
     res.setHeader("Content-Disposition", `attachment; filename="vidgrab_${Date.now()}.${extension}"`);
     res.setHeader("Content-Type", contentType);
     res.setHeader("Content-Length", fs.statSync(filePath).size);
 
     const stream = fs.createReadStream(filePath);
-    stream.on("close", () => {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    });
-    stream.on("error", (streamErr) => {
-      console.error("File stream error:", streamErr);
+    stream.on("close", () => fs.rmSync(tempDir, { recursive: true, force: true }));
+    stream.on("error", (e) => {
+      console.error("File stream error:", e);
       fs.rmSync(tempDir, { recursive: true, force: true });
     });
     stream.pipe(res);
@@ -254,15 +245,13 @@ app.get("/api/stream", (req, res) => {
 
   req.on("close", () => {
     if (!downloadComplete && !res.writableEnded) {
-      if (!ytDlpProcess.killed) {
-        ytDlpProcess.kill("SIGTERM");
-      }
+      if (!ytDlpProcess.killed) ytDlpProcess.kill("SIGTERM");
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 });
 
-// Serve static frontend build in production
+// Serve static frontend build
 app.use(express.static(path.join(__dirname, "dist")));
 
 app.get("*", (req, res) => {
@@ -277,4 +266,10 @@ app.get("*", (req, res) => {
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`VidGrab server running on port ${PORT}`);
+  if (COOKIES_PATH) {
+    const exists = fs.existsSync(COOKIES_PATH);
+    console.log(`[cookies] YTDLP_COOKIES=${COOKIES_PATH} — file ${exists ? "found ✓" : "NOT found ✗"}`);
+  } else {
+    console.log("[cookies] No YTDLP_COOKIES env var set — running without cookies");
+  }
 });
