@@ -45,8 +45,10 @@ function getBaseYtDlpArgs() {
     "--socket-timeout", "30",
     "--retries", "10"
   ];
-  if (process.env.YTDLP_COOKIES) {
-    args.push("--cookies", process.env.YTDLP_COOKIES);
+  const cookiesPath = process.env.YTDLP_COOKIES || "/app/cookies.txt";
+  if (fs.existsSync(cookiesPath)) {
+    console.log(`[yt-dlp] Using cookies file: ${cookiesPath}`);
+    args.push("--cookies", cookiesPath);
   }
   return args;
 }
