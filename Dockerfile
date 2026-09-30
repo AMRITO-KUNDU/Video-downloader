@@ -4,8 +4,10 @@ FROM node:20-slim
 # Install system runtime dependencies, yt-dlp via pip, and Deno JS runtime (for YouTube n-challenge)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip ffmpeg curl ca-certificates unzip \
-    && pip3 install --break-system-packages --no-cache-dir "yt-dlp[default]" \
+    && pip3 install --break-system-packages --no-cache-dir -U "yt-dlp[default]" \
     && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh \
+    && yt-dlp --version \
+    && deno --version \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Set working directory

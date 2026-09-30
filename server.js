@@ -37,24 +37,33 @@ function durationLabel(seconds) {
   return hours ? `${hours}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}` : `${mins}:${String(secs).padStart(2, "0")}`;
 }
 
+function getBaseYtDlpArgs() {
+  const args = [
+    "-4",
+    "--extractor-args", "youtube:player_client=android,web,mweb",
+    "--no-warnings",
+    "--socket-timeout", "30",
+    "--retries", "10"
+  ];
+  if (process.env.YTDLP_COOKIES) {
+    args.push("--cookies", process.env.YTDLP_COOKIES);
+  }
+  return args;
+}
+
 // API: Search YouTube real videos using yt-dlp
 app.get("/api/search", async (req, res) => {
   const query = req.query.q;
   if (!query || typeof query !== "string") return res.json({ videos: [] });
 
   try {
-    const { stdout } = await execFileAsync(
-      "yt-dlp",
-      [
-        "--no-warnings",
-        "--socket-timeout", "30",
-        "--retries", "5",
-        "--flat-playlist",
-        "--dump-json",
-        `ytsearch8:${query}`
-      ],
-      { maxBuffer: 10 * 1024 * 1024 }
-    );
+    const args = [
+      ...getBaseYtDlpArgs(),
+      "--flat-playlist",
+      "--dump-json",
+      `ytsearch8:${query}`
+    ];
+    const { stdout } = await execFileAsync("yt-dlp", args, { maxBuffer: 10 * 1024 * 1024 });
 
     const lines = stdout.trim().split("\n").filter(Boolean);
     const videos = lines
@@ -99,18 +108,13 @@ app.get("/api/info", async (req, res) => {
   if (!validateVideoUrl(videoUrl)) return res.status(400).json({ error: "Only public YouTube and Facebook URLs are supported" });
 
   try {
-    const { stdout } = await execFileAsync(
-      "yt-dlp",
-      [
-        "--no-warnings",
-        "--socket-timeout", "30",
-        "--retries", "5",
-        "--dump-json",
-        "--no-playlist",
-        videoUrl
-      ],
-      { maxBuffer: 10 * 1024 * 1024 }
-    );
+    const args = [
+      ...getBaseYtDlpArgs(),
+      "--dump-json",
+      "--no-playlist",
+      videoUrl
+    ];
+    const { stdout } = await execFileAsync("yt-dlp", args, { maxBuffer: 10 * 1024 * 1024 });
 
     const item = JSON.parse(stdout);
     const durationSec = item.duration || 0;
@@ -168,39 +172,31 @@ app.get("/api/stream", (req, res) => {
   let downloadComplete = false;
   let stderrOutput = "";
 
-  let args = [];
+  let args = getBaseYtDlpArgs();
   let contentType = "video/mp4";
   let extension = "mp4";
 
   if (format === "mp3") {
     contentType = "audio/mpeg";
     extension = "mp3";
-    args = [
+    args.push(
       "-x",
       "--audio-format", "mp3",
       "--audio-quality", "0",
       "--no-playlist",
-      "--no-warnings",
-      "--socket-timeout", "30",
-      "--retries", "10",
-      "--extractor-args", "youtube:player_client=web,mweb,android",
       "-o", outputTemplate,
       url
-    ];
+    );
   } else {
     const formatStr = `bv*[height<=${maxHeight}]+ba/b[height<=${maxHeight}]`;
-    args = [
+    args.push(
       "-f", formatStr,
       "--merge-output-format", "mp4",
       "--no-playlist",
-      "--no-warnings",
-      "--socket-timeout", "30",
-      "--retries", "10",
       "--fragment-retries", "10",
-      "--extractor-args", "youtube:player_client=web,mweb,android",
       "-o", outputTemplate,
       url
-    ];
+    );
   }
 
   const ytDlpProcess = spawn("yt-dlp", args);
