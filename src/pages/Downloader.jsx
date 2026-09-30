@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Download, Link2, Loader2, ClipboardPaste, Film, Music } from "lucide-react";
+import { Download, Link2, Loader2, ClipboardPaste, Film, Music, CheckCircle2 } from "lucide-react";
 import { Image } from "@/components/ui/image";
 import MobileTopBar from "@/components/layout/MobileTopBar";
 import { fetchVideoInfo, isVideoUrl, downloadVideo } from "@/lib/videoService";
@@ -14,11 +14,17 @@ export default function Downloader() {
   const [url, setUrl] = useState(searchParams.get("url") || "");
   const [video, setVideo] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState("");
   const [quality, setQuality] = useState("720p");
   const [format, setFormat] = useState("mp4");
+
+  // Download state
+  const [dlPhase, setDlPhase] = useState("idle"); // idle | extracting | transferring | done
+  const [progress, setProgress] = useState(0); // 0–100
+  const abortRef = useRef(null);
   const { toast } = useToast();
+
+  const isDownloading = dlPhase === "extracting" || dlPhase === "transferring";
 
   const handleFetch = async (override) => {
     const u = (override ?? url).trim();
@@ -42,7 +48,6 @@ export default function Downloader() {
     }
   };
 
-  // If opened via ?url= (from a video card), auto-fetch
   useEffect(() => {
     const u = searchParams.get("url");
     if (u) {
@@ -54,37 +59,88 @@ export default function Downloader() {
 
   const handleDownload = async () => {
     const targetUrl = video?.url || url;
-    if (!targetUrl) return;
+    if (!targetUrl || isDownloading) return;
 
-    setDownloading(true);
+    setDlPhase("extracting");
+    setProgress(0);
+
     try {
+      // 1. Ask backend for the stream URL
       const res = await downloadVideo({ url: targetUrl, format, quality });
-      if (res?.success && res?.url) {
-        const a = document.createElement("a");
-        a.href = res.url;
-        a.target = "_blank";
-        a.download = `${video?.title || "video"}.${format}`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-
-        toast({
-          title: "Download Started",
-          description: `Preparing your ${format.toUpperCase()} (${quality}) file...`,
-        });
-      } else {
-        throw new Error(res?.error || "Could not generate download link.");
+      if (!res?.success || !res?.url) {
+        throw new Error(res?.error || "Could not start download.");
       }
+
+      // 2. Fetch the actual file with progress tracking
+      setDlPhase("transferring");
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      const response = await fetch(res.url, { signal: controller.signal });
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(text || `Download failed (${response.status})`);
+      }
+
+      const total = Number(response.headers.get("Content-Length")) || 0;
+      const reader = response.body.getReader();
+      const chunks = [];
+      let received = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        if (total > 0) {
+          setProgress(Math.min(99, Math.round((received / total) * 100)));
+        }
+      }
+
+      setProgress(100);
+      setDlPhase("done");
+
+      // 3. Trigger browser save
+      const blob = new Blob(chunks);
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `${(video?.title || "video").replace(/[^\w\s-]/g, "").slice(0, 80)}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+
+      toast({
+        title: "Download complete",
+        description: `${format.toUpperCase()} saved to your device.`,
+      });
+
+      // Reset after a short moment
+      setTimeout(() => {
+        setDlPhase("idle");
+        setProgress(0);
+      }, 1800);
     } catch (err) {
+      if (err.name === "AbortError") return;
+      setDlPhase("idle");
+      setProgress(0);
       toast({
         variant: "destructive",
-        title: "Download Error",
-        description: err.message || "Failed to download video using yt-dlp backend.",
+        title: "Download failed",
+        description: err.message || "Something went wrong while downloading.",
       });
     } finally {
-      setDownloading(false);
+      abortRef.current = null;
     }
   };
+
+  const statusLabel = {
+    idle: `Download ${format === "mp3" ? "MP3" : quality}`,
+    extracting: "Extracting from YouTube…",
+    transferring: progress > 0 ? `Downloading ${progress}%` : "Receiving file…",
+    done: "Saved",
+  }[dlPhase];
 
   return (
     <div className="flex h-full flex-col">
@@ -162,10 +218,12 @@ export default function Downloader() {
                     ].map((f) => (
                       <button
                         key={f.id}
-                        onClick={() => setFormat(f.id)}
+                        onClick={() => !isDownloading && setFormat(f.id)}
+                        disabled={isDownloading}
                         className={cn(
                           "flex items-center gap-1.5 border-2 border-black px-3 py-2 text-xs font-bold uppercase nb-press",
-                          format === f.id ? "bg-black text-white" : "bg-white"
+                          format === f.id ? "bg-black text-white" : "bg-white",
+                          isDownloading && "opacity-50"
                         )}
                       >
                         <f.icon className="h-3.5 w-3.5" strokeWidth={2.5} /> {f.label}
@@ -181,10 +239,12 @@ export default function Downloader() {
                       {QUALITIES.map((q) => (
                         <button
                           key={q}
-                          onClick={() => setQuality(q)}
+                          onClick={() => !isDownloading && setQuality(q)}
+                          disabled={isDownloading}
                           className={cn(
                             "border-2 border-black px-3 py-2 text-xs font-bold uppercase nb-press",
-                            quality === q ? "bg-brand shadow-[3px_3px_0_0_#000]" : "bg-white"
+                            quality === q ? "bg-brand shadow-[3px_3px_0_0_#000]" : "bg-white",
+                            isDownloading && "opacity-50"
                           )}
                         >
                           {q}
@@ -194,14 +254,47 @@ export default function Downloader() {
                   </div>
                 )}
 
-                <button onClick={handleDownload} disabled={downloading} className="nb-btn-dark mt-5 w-full px-3 py-3 text-sm">
-                  {downloading ? (
+                {/* Progress bar – neo-brutalism style */}
+                {isDownloading && (
+                  <div className="mt-5">
+                    <div className="mb-1.5 flex items-center justify-between text-[11px] font-bold uppercase tracking-widest">
+                      <span className="text-black/60">{statusLabel}</span>
+                      {dlPhase === "transferring" && progress > 0 && (
+                        <span className="text-black">{progress}%</span>
+                      )}
+                    </div>
+                    <div className="h-3 w-full border-2 border-black bg-white shadow-[2px_2px_0_0_#000]">
+                      {dlPhase === "extracting" ? (
+                        // Indeterminate shimmer bar
+                        <div className="h-full w-full overflow-hidden bg-brand/30">
+                          <div className="h-full w-1/3 animate-[shimmer_1.2s_ease-in-out_infinite] bg-brand" />
+                        </div>
+                      ) : (
+                        // Determinate progress
+                        <div
+                          className="h-full bg-brand transition-all duration-200 ease-out"
+                          style={{ width: `${progress}%` }}
+                        />
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  onClick={handleDownload}
+                  disabled={isDownloading || dlPhase === "done"}
+                  className="nb-btn-dark mt-5 w-full px-3 py-3 text-sm"
+                >
+                  {dlPhase === "done" ? (
+                    <CheckCircle2 className="h-4 w-4" strokeWidth={3} />
+                  ) : isDownloading ? (
                     <Loader2 className="h-4 w-4 animate-spin" strokeWidth={3} />
                   ) : (
                     <Download className="h-4 w-4" strokeWidth={3} />
                   )}
-                  {downloading ? "Extracting..." : `Download ${format === "mp3" ? "MP3" : quality}`}
+                  {statusLabel}
                 </button>
+
                 <p className="mt-2 text-center text-[11px] font-medium text-black/45">
                   Powered by yt-dlp backend integration.
                 </p>
@@ -210,6 +303,14 @@ export default function Downloader() {
           )}
         </div>
       </div>
+
+      {/* Tiny keyframe for the indeterminate shimmer */}
+      <style>{`
+        @keyframes shimmer {
+          0%   { transform: translateX(-100%); }
+          100% { transform: translateX(400%); }
+        }
+      `}</style>
     </div>
   );
 }
