@@ -10,7 +10,27 @@ const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const COOKIES_PATH = process.env.YTDLP_COOKIES || null;
+const SECRET_COOKIES = process.env.YTDLP_COOKIES || null;
+const WRITABLE_COOKIES = "/tmp/cookies.txt";
+
+// Copy secret cookies to a writable location once at startup
+function prepareCookies() {
+  if (!SECRET_COOKIES) return null;
+  if (!fs.existsSync(SECRET_COOKIES)) {
+    console.log(`[cookies] Secret file not found: ${SECRET_COOKIES}`);
+    return null;
+  }
+  try {
+    fs.copyFileSync(SECRET_COOKIES, WRITABLE_COOKIES);
+    console.log(`[cookies] Copied to writable location: ${WRITABLE_COOKIES}`);
+    return WRITABLE_COOKIES;
+  } catch (err) {
+    console.error("[cookies] Failed to copy cookies:", err.message);
+    return null;
+  }
+}
+
+const COOKIES_PATH = prepareCookies();
 
 const app = express();
 app.use(express.json());
@@ -37,8 +57,8 @@ function durationLabel(seconds) {
   const mins = Math.floor((total % 3600) / 60);
   const secs = total % 60;
   return hours
-    ? `${hours}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`
-    : `${mins}:${String(secs).padStart(2, "0")}`;
+    ? `\( {hours}: \){String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`
+    : `\( {mins}: \){String(secs).padStart(2, "0")}`;
 }
 
 function getYtDlpBaseArgs() {
@@ -47,7 +67,7 @@ function getYtDlpBaseArgs() {
     "--extractor-args", "youtube:player_client=android,web,mweb",
     "--no-warnings",
     "--socket-timeout", "30",
-    "--retries", "10"
+    "--retries", "10",
   ];
   if (COOKIES_PATH && fs.existsSync(COOKIES_PATH)) {
     args.push("--cookies", COOKIES_PATH);
@@ -55,7 +75,7 @@ function getYtDlpBaseArgs() {
   return args;
 }
 
-// API: Search YouTube real videos using yt-dlp
+// API: Search YouTube
 app.get("/api/search", async (req, res) => {
   const query = req.query.q;
   if (!query || typeof query !== "string") return res.json({ videos: [] });
@@ -65,7 +85,7 @@ app.get("/api/search", async (req, res) => {
       ...getYtDlpBaseArgs(),
       "--flat-playlist",
       "--dump-json",
-      `ytsearch8:${query}`
+      `ytsearch8:${query}`,
     ];
     const { stdout } = await execFileAsync("yt-dlp", args, { maxBuffer: 10 * 1024 * 1024 });
 
@@ -75,8 +95,9 @@ app.get("/api/search", async (req, res) => {
         try {
           const item = JSON.parse(line);
           const durationSec = item.duration || 0;
-          const durStr = durationLabel(durationSec);
-          const vId = item.id || (typeof item.url === "string" && /^[A-Za-z0-9_-]{11}$/.test(item.url) ? item.url : "");
+          const vId =
+            item.id ||
+            (typeof item.url === "string" && /^[A-Za-z0-9_-]{11}$/.test(item.url) ? item.url : "");
 
           return {
             id: vId || `v_${i}`,
@@ -85,7 +106,7 @@ app.get("/api/search", async (req, res) => {
             channel: item.uploader || item.channel || "YouTube Creator",
             views: item.view_count ? `${item.view_count.toLocaleString()} views` : "—",
             uploadDate: item.upload_date ? `${item.upload_date.slice(0, 4)}` : "—",
-            duration: durStr,
+            duration: durationLabel(durationSec),
             seconds: durationSec,
             url: vId ? `https://www.youtube.com/watch?v=${vId}` : item.webpage_url || "",
             thumbnail: vId
@@ -105,7 +126,7 @@ app.get("/api/search", async (req, res) => {
   }
 });
 
-// API: Get real video info using yt-dlp
+// API: Get video info
 app.get("/api/info", async (req, res) => {
   const videoUrl = req.query.url;
   if (!videoUrl) return res.status(400).json({ error: "URL parameter required" });
@@ -117,7 +138,7 @@ app.get("/api/info", async (req, res) => {
       ...getYtDlpBaseArgs(),
       "--dump-json",
       "--no-playlist",
-      videoUrl
+      videoUrl,
     ];
     const { stdout } = await execFileAsync("yt-dlp", args, { maxBuffer: 10 * 1024 * 1024 });
 
@@ -142,7 +163,7 @@ app.get("/api/info", async (req, res) => {
   }
 });
 
-// API: Download info endpoint – returns a /api/stream URL the browser will follow
+// API: Download info endpoint
 app.post("/api/download", (req, res) => {
   const { url, format = "mp4", quality = "720p" } = req.body || {};
   if (!url) return res.status(400).json({ success: false, error: "URL is required" });
@@ -153,11 +174,11 @@ app.post("/api/download", (req, res) => {
   if (format === "mp4" && !QUALITY_HEIGHTS.has(quality))
     return res.status(400).json({ success: false, error: "Unsupported quality" });
 
-  const streamUrl = `/api/stream?url=${encodeURIComponent(url)}&format=${format}&quality=${quality}`;
+  const streamUrl = `/api/stream?url=\( {encodeURIComponent(url)}&format= \){format}&quality=${quality}`;
   return res.json({ success: true, url: streamUrl, format, quality });
 });
 
-// API: Direct binary download stream via yt-dlp
+// API: Stream download
 app.get("/api/stream", (req, res) => {
   const { url, format = "mp4", quality = "720p" } = req.query;
 
@@ -189,7 +210,7 @@ app.get("/api/stream", (req, res) => {
     );
   } else {
     args.push(
-      "-f", `bv*[height<=${maxHeight}]+ba/b[height<=${maxHeight}]`,
+      "-f", `bv*[height<=\( {maxHeight}]+ba/b[height<= \){maxHeight}]`,
       "--merge-output-format", "mp4",
       "--no-playlist",
       "--fragment-retries", "10",
@@ -230,7 +251,7 @@ app.get("/api/stream", (req, res) => {
     const filePath = path.join(tempDir, file);
     downloadComplete = true;
 
-    res.setHeader("Content-Disposition", `attachment; filename="vidgrab_${Date.now()}.${extension}"`);
+    res.setHeader("Content-Disposition", `attachment; filename="vidgrab_\( {Date.now()}. \){extension}"`);
     res.setHeader("Content-Type", contentType);
     res.setHeader("Content-Length", fs.statSync(filePath).size);
 
@@ -251,7 +272,7 @@ app.get("/api/stream", (req, res) => {
   });
 });
 
-// Serve static frontend build
+// Serve frontend
 app.use(express.static(path.join(__dirname, "dist")));
 
 app.get("*", (req, res) => {
@@ -267,9 +288,8 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`VidGrab server running on port ${PORT}`);
   if (COOKIES_PATH) {
-    const exists = fs.existsSync(COOKIES_PATH);
-    console.log(`[cookies] YTDLP_COOKIES=${COOKIES_PATH} — file ${exists ? "found ✓" : "NOT found ✗"}`);
+    console.log(`[cookies] Using writable cookies: ${COOKIES_PATH}`);
   } else {
-    console.log("[cookies] No YTDLP_COOKIES env var set — running without cookies");
+    console.log("[cookies] No cookies available — running without cookies");
   }
 });
