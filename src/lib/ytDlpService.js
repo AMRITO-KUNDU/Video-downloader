@@ -171,103 +171,204 @@ export async function getFormats(videoUrl) {
   }
 
   try {
+    // Use --dump-json to get full info, then extract formats from the JSON
     const args = [
       ...getYtDlpBaseArgs(),
-      "--list-formats-json",
+      "--dump-json",
       "--no-playlist",
       videoUrl
     ];
     const { stdout } = await execFileAsync("yt-dlp", args, { maxBuffer: 10 * 1024 * 1024 });
 
-    const formatData = JSON.parse(stdout);
+    const item = JSON.parse(stdout);
     
-    // Filter formats that can be delivered as direct URLs
-    // We want: video+audio combined, video-only, or audio-only
-    const validFormats = formatData.formats
-      .filter(format => {
-        // Skip DASH manifests and other non-direct formats
-        if (format.protocol === 'dash' || format.protocol === 'm3u8_native') {
-          return false;
-        }
-        
-        // Check if this is a direct URL format
-        if (format.url && typeof format.url === 'string') {
-          return true;
-        }
-        
-        // Also accept formats that yt-dlp can extract direct URLs for
-        return format.format_id && format.ext;
-      })
-      .map(format => {
-        // Create a more descriptive label
-        let label = format.format_id;
-        
-        if (format.height) {
-          label = `${format.height}p`;
-          if (format.fps && format.fps > 30) {
-            label += `${format.fps}`;
-          }
-        } else if (format.abr) {
-          label = `${Math.round(format.abr)}kbps`;
-        }
-        
-        // Add codec info for advanced users
-        const codecInfo = [];
-        if (format.vcodec && format.vcodec !== 'none') {
-          codecInfo.push(format.vcodec);
-        }
-        if (format.acodec && format.acodec !== 'none') {
-          codecInfo.push(format.acodec);
-        }
-        
-        return {
-          format_id: format.format_id,
-          ext: format.ext || 'unknown',
-          height: format.height,
-          width: format.width,
-          fps: format.fps,
-          abr: format.abr,
-          vcodec: format.vcodec || 'none',
-          acodec: format.acodec || 'none',
-          protocol: format.protocol || 'unknown',
-          label: label,
-          filesize: format.filesize || format.filesize_approx || null,
-          resolution: format.height ? `${format.width || '?'}x${format.height}` : null,
-          codec_info: codecInfo.length > 0 ? codecInfo.join('+') : null,
-          type: format.height ? (format.acodec && format.acodec !== 'none' ? 'video+audio' : 'video-only') : 
-                (format.acodec && format.acodec !== 'none' ? 'audio-only' : 'unknown'),
-          has_video: !!format.height,
-          has_audio: format.acodec && format.acodec !== 'none',
-        };
-      });
-    
-    // Sort formats: first video+audio, then video-only, then audio-only
-    validFormats.sort((a, b) => {
-      const typePriority = { 'video+audio': 0, 'video-only': 1, 'audio-only': 2 };
-      const aTypePriority = typePriority[a.type] ?? 3;
-      const bTypePriority = typePriority[b.type] ?? 3;
+    // If formats are not available in the dump, try --list-formats with --json
+    if (!item.formats || !Array.isArray(item.formats)) {
+      // Fallback: try --list-formats -j (JSON output)
+      const listArgs = [
+        ...getYtDlpBaseArgs(),
+        "--list-formats",
+        "-j", // JSON output
+        "--no-playlist",
+        videoUrl
+      ];
       
-      if (aTypePriority !== bTypePriority) {
-        return aTypePriority - bTypePriority;
+      try {
+        const { stdout: listStdout } = await execFileAsync("yt-dlp", listArgs, { maxBuffer: 10 * 1024 * 1024 });
+        const formatData = JSON.parse(listStdout);
+        
+        // Handle different output formats
+        if (Array.isArray(formatData)) {
+          // Some versions output array of format objects directly
+          processFormats(formatData, videoUrl);
+        } else if (formatData.formats && Array.isArray(formatData.formats)) {
+          return processFormats(formatData.formats, videoUrl);
+        } else {
+          throw new Error("Unexpected format data structure");
+        }
+      } catch (listErr) {
+        console.error("List formats with -j failed, trying plain --list-formats:", listErr);
+        // Last fallback: use plain --list-formats and parse the text output
+        const textArgs = [
+          ...getYtDlpBaseArgs(),
+          "--list-formats",
+          "--no-playlist",
+          videoUrl
+        ];
+        
+        const { stdout: textStdout } = await execFileAsync("yt-dlp", textArgs, { maxBuffer: 10 * 1024 * 1024 });
+        return parseTextFormats(textStdout, videoUrl);
       }
-      
-      // Within same type, sort by quality
-      if (aTypePriority === 0 || aTypePriority === 1) {
-        return (b.height || 0) - (a.height || 0);
-      } else {
-        return (b.abr || 0) - (a.abr || 0);
-      }
-    });
+    }
     
-    return {
-      videoUrl,
-      formats: validFormats,
-      total: validFormats.length
-    };
+    // Process formats from the dump-json output
+    return processFormats(item.formats, videoUrl);
+    
   } catch (err) {
     console.error("Formats error:", err);
     throw new Error(`Could not fetch video formats: ${err.message}`);
   }
+}
+
+/**
+ * Process format array and filter for direct-URL-capable formats
+ */
+function processFormats(formats, videoUrl) {
+  // Filter formats that can be delivered as direct URLs
+  const validFormats = formats
+    .filter(format => {
+      // Skip DASH manifests and other non-direct formats
+      if (format.protocol === 'dash' || format.protocol === 'm3u8_native') {
+        return false;
+      }
+      
+      // Check if this is a direct URL format
+      if (format.url && typeof format.url === 'string') {
+        return true;
+      }
+      
+      // Also accept formats that yt-dlp can extract direct URLs for
+      return format.format_id && format.ext;
+    })
+    .map(format => {
+      // Create a more descriptive label
+      let label = format.format_id;
+      
+      if (format.height) {
+        label = `${format.height}p`;
+        if (format.fps && format.fps > 30) {
+          label += `${format.fps}`;
+        }
+      } else if (format.abr) {
+        label = `${Math.round(format.abr)}kbps`;
+      }
+      
+      // Add codec info for advanced users
+      const codecInfo = [];
+      if (format.vcodec && format.vcodec !== 'none') {
+        codecInfo.push(format.vcodec);
+      }
+      if (format.acodec && format.acodec !== 'none') {
+        codecInfo.push(format.acodec);
+      }
+      
+      return {
+        format_id: format.format_id,
+        ext: format.ext || 'unknown',
+        height: format.height,
+        width: format.width,
+        fps: format.fps,
+        abr: format.abr,
+        vcodec: format.vcodec || 'none',
+        acodec: format.acodec || 'none',
+        protocol: format.protocol || 'unknown',
+        label: label,
+        filesize: format.filesize || format.filesize_approx || null,
+        resolution: format.height ? `${format.width || '?'}x${format.height}` : null,
+        codec_info: codecInfo.length > 0 ? codecInfo.join('+') : null,
+        type: format.height ? (format.acodec && format.acodec !== 'none' ? 'video+audio' : 'video-only') : 
+              (format.acodec && format.acodec !== 'none' ? 'audio-only' : 'unknown'),
+        has_video: !!format.height,
+        has_audio: format.acodec && format.acodec !== 'none',
+      };
+    });
+  
+  // Sort formats: first video+audio, then video-only, then audio-only
+  validFormats.sort((a, b) => {
+    const typePriority = { 'video+audio': 0, 'video-only': 1, 'audio-only': 2 };
+    const aTypePriority = typePriority[a.type] ?? 3;
+    const bTypePriority = typePriority[b.type] ?? 3;
+    
+    if (aTypePriority !== bTypePriority) {
+      return aTypePriority - bTypePriority;
+    }
+    
+    // Within same type, sort by quality
+    if (aTypePriority === 0 || aTypePriority === 1) {
+      return (b.height || 0) - (a.height || 0);
+    } else {
+      return (b.abr || 0) - (a.abr || 0);
+    }
+  });
+  
+  return {
+    videoUrl,
+    formats: validFormats,
+    total: validFormats.length
+  };
+}
+
+/**
+ * Parse text output from --list-formats (fallback method)
+ */
+function parseTextFormats(textOutput, videoUrl) {
+  const lines = textOutput.trim().split('\n');
+  const formats = [];
+  
+  // Parse text format lines like: "ID  EXT   RESOLUTION FPS │   FILESIZE   TBR PROTO │ VCODEC        ACODEC MORE .INFO"
+  for (const line of lines) {
+    if (!line.trim() || line.startsWith('ID') || line.startsWith('format') || line.includes('│')) {
+      continue; // Skip headers and separator lines
+    }
+    
+    const parts = line.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      const formatId = parts[0];
+      const ext = parts[1];
+      
+      // Try to extract more info
+      const heightMatch = line.match(/(\d+)p/);
+      const height = heightMatch ? parseInt(heightMatch[1]) : null;
+      
+      const abrMatch = line.match(/audio only.*?(\d+)kbps/);
+      const abr = abrMatch ? parseInt(abrMatch[1]) : null;
+      
+      formats.push({
+        format_id: formatId,
+        ext: ext || 'unknown',
+        height: height,
+        width: height ? Math.round(height * (16/9)) : null, // approximate
+        fps: null,
+        abr: abr,
+        vcodec: 'unknown',
+        acodec: 'unknown',
+        protocol: 'unknown',
+        label: height ? `${height}p` : abr ? `${abr}kbps` : formatId,
+        filesize: null,
+        resolution: null,
+        codec_info: null,
+        type: height ? 'video-only' : abr ? 'audio-only' : 'unknown',
+        has_video: !!height,
+        has_audio: !!abr,
+      });
+    }
+  }
+  
+  return {
+    videoUrl,
+    formats: formats,
+    total: formats.length
+  };
 }
 
 /**
@@ -286,23 +387,25 @@ export async function getDirectUrl(videoUrl, formatId) {
   }
 
   try {
-    // First, get the format list to validate the format_id exists
+    // First, get the format info to validate the format_id exists and get metadata
     const args = [
       ...getYtDlpBaseArgs(),
-      "--list-formats-json",
+      "--dump-json",
+      "-f", formatId,
       "--no-playlist",
       videoUrl
     ];
-    const { stdout } = await execFileAsync("yt-dlp", args, { maxBuffer: 10 * 1024 * 1024 });
-    const formatData = JSON.parse(stdout);
     
-    // Validate format_id exists
-    const selectedFormat = formatData.formats.find(f => f.format_id === formatId);
+    const { stdout } = await execFileAsync("yt-dlp", args, { maxBuffer: 10 * 1024 * 1024 });
+    const item = JSON.parse(stdout);
+    
+    // Check if this format exists
+    const selectedFormat = item.formats?.find(f => f.format_id === formatId);
     if (!selectedFormat) {
       throw new Error(`Format ${formatId} not found for this video`);
     }
     
-    // Extract direct URL for the specific format
+    // Extract direct URL for the specific format using --get-url
     const urlArgs = [
       ...getYtDlpBaseArgs(),
       "-f", formatId,
@@ -319,7 +422,7 @@ export async function getDirectUrl(videoUrl, formatId) {
     }
     
     // Get additional metadata for the format
-    const formatInfo = formatData.formats.find(f => f.format_id === formatId);
+    const formatInfo = item.formats?.find(f => f.format_id === formatId) || selectedFormat;
     
     return {
       success: true,
