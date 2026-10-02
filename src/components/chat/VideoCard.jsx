@@ -32,6 +32,12 @@ export default function VideoCard({ video }) {
     }
   };
 
+  const navigateToDownloader = () => {
+    navigate(`/downloader?url=${encodeURIComponent(video.url)}`, {
+      state: { video } // Pass the video metadata directly to avoid extra API call
+    });
+  };
+
   return (
     <div className="nb-card overflow-hidden">
       <button
@@ -62,7 +68,7 @@ export default function VideoCard({ video }) {
             <Play className="h-4 w-4 fill-black" strokeWidth={3} /> Play
           </button>
           <button
-            onClick={() => navigate(`/downloader?url=${encodeURIComponent(video.url)}`)}
+            onClick={navigateToDownloader}
             className="nb-btn flex-1 px-3 py-2.5 text-sm"
           >
             <Download className="h-4 w-4" strokeWidth={3} /> Download

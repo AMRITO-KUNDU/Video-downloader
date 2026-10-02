@@ -32,6 +32,12 @@ export default function SearchResultCard({ video }) {
     }
   };
 
+  const navigateToDownloader = () => {
+    navigate(`/downloader?url=${encodeURIComponent(video.url)}`, {
+      state: { video } // Pass the video metadata directly to avoid extra API call
+    });
+  };
+
   return (
     <div className="nb-card overflow-hidden">
       <div className="flex flex-col sm:flex-row">
@@ -64,7 +70,7 @@ export default function SearchResultCard({ video }) {
               <Play className="h-3.5 w-3.5 fill-black" strokeWidth={3} /> Watch
             </button>
             <button
-              onClick={() => navigate(`/downloader?url=${encodeURIComponent(video.url)}`)}
+              onClick={navigateToDownloader}
               className="nb-btn flex-1 px-3 py-2 text-xs"
             >
               <Download className="h-3.5 w-3.5" strokeWidth={3} /> Download

@@ -22,8 +22,32 @@ function setStorage(key, value) {
 }
 
 export const apiClient = {
-  // Download Video API endpoint
+  // Get available formats for a video (NEW - Direct link architecture)
+  async getFormats(url) {
+    const response = await fetch(`/api/formats?url=${encodeURIComponent(url)}`);
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || errorData.details || "Failed to fetch formats");
+    }
+    return await response.json();
+  },
+
+  // Get direct download URL for a specific format (NEW - Direct link architecture)
+  async getDirectUrl({ url, formatId }) {
+    if (!url) throw new Error("URL is required");
+    if (!formatId) throw new Error("Format ID is required");
+    
+    const response = await fetch(`/api/direct-url?url=${encodeURIComponent(url)}&format_id=${encodeURIComponent(formatId)}`);
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || errorData.details || "Failed to get direct URL");
+    }
+    return await response.json();
+  },
+
+  // Download Video API endpoint (LEGACY - Kept for backward compatibility)
   async downloadVideo({ url, format = "mp4", quality = "720p" }) {
+    console.warn("apiClient.downloadVideo() is deprecated. Use getDirectUrl() instead.");
     const response = await fetch("/api/download", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

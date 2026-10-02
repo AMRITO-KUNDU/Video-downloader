@@ -1,30 +1,74 @@
 import { useEffect, useState, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
-import { Download, Link2, Loader2, ClipboardPaste, Film, Music, CheckCircle2 } from "lucide-react";
+import { useSearchParams, useLocation } from "react-router-dom";
+import { Download, Link2, Loader2, ClipboardPaste, Film, Music, CheckCircle2, Check, X } from "lucide-react";
 import { Image } from "@/components/ui/image";
 import MobileTopBar from "@/components/layout/MobileTopBar";
-import { fetchVideoInfo, isVideoUrl, downloadVideo } from "@/lib/videoService";
+import { fetchVideoInfo, isVideoUrl, fetchVideoFormats, getDirectDownloadUrl } from "@/lib/videoService";
 import { useToast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 
-const QUALITIES = ["1080p", "720p", "480p", "360p"];
-
 export default function Downloader() {
   const [searchParams] = useSearchParams();
+  const location = useLocation();
   const [url, setUrl] = useState(searchParams.get("url") || "");
   const [video, setVideo] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [loadingFormats, setLoadingFormats] = useState(false);
+  const [formats, setFormats] = useState(null);
+  const [selectedFormat, setSelectedFormat] = useState(null);
   const [error, setError] = useState("");
-  const [quality, setQuality] = useState("720p");
-  const [format, setFormat] = useState("mp4");
-
-  // Download state
-  const [dlPhase, setDlPhase] = useState("idle"); // idle | extracting | transferring | done
+  const [formatError, setFormatError] = useState("");
+  
+  // Download state for direct downloads
+  const [dlPhase, setDlPhase] = useState("idle"); // idle | extracting | done
   const [progress, setProgress] = useState(0); // 0–100
   const abortRef = useRef(null);
   const { toast } = useToast();
 
-  const isDownloading = dlPhase === "extracting" || dlPhase === "transferring";
+  const isDownloading = dlPhase === "extracting";
+
+  // Check if we have video data passed from search results
+  const hasVideoData = location.state?.video;
+
+  // Initialize from search result metadata or URL
+  useEffect(() => {
+    if (hasVideoData) {
+      setVideo(hasVideoData);
+      setUrl(hasVideoData.url);
+      // Fetch formats for this video
+      loadFormats(hasVideoData.url);
+    } else {
+      const u = searchParams.get("url");
+      if (u) {
+        setUrl(u);
+        handleFetch(u);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state, searchParams]);
+
+  const loadFormats = async (videoUrl) => {
+    setLoadingFormats(true);
+    setFormatError("");
+    try {
+      const result = await fetchVideoFormats(videoUrl);
+      setFormats(result);
+      
+      // Auto-select the first available format (usually best quality video+audio)
+      if (result.formats && result.formats.length > 0) {
+        setSelectedFormat(result.formats[0]);
+      }
+    } catch (err) {
+      setFormatError(err.message || "Failed to load formats");
+      toast({
+        variant: "destructive",
+        title: "Formats Error",
+        description: err.message || "Failed to load available formats",
+      });
+    } finally {
+      setLoadingFormats(false);
+    }
+  };
 
   const handleFetch = async (override) => {
     const u = (override ?? url).trim();
@@ -32,15 +76,19 @@ export default function Downloader() {
     if (!isVideoUrl(u)) {
       setError("Paste a valid YouTube or Facebook video link.");
       setVideo(null);
+      setFormats(null);
       return;
     }
     setError("");
     setLoading(true);
     setVideo(null);
+    setFormats(null);
     try {
       const v = await fetchVideoInfo(u);
       if (!v) throw new Error();
       setVideo(v);
+      // Load formats for this video
+      await loadFormats(u);
     } catch {
       setError("Couldn't fetch that video. Make sure it's public.");
     } finally {
@@ -48,16 +96,20 @@ export default function Downloader() {
     }
   };
 
-  useEffect(() => {
-    const u = searchParams.get("url");
-    if (u) {
-      setUrl(u);
-      handleFetch(u);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const handleSelectFormat = (format) => {
+    setSelectedFormat(format);
+  };
 
   const handleDownload = async () => {
+    if (!selectedFormat) {
+      toast({
+        variant: "destructive",
+        title: "No Format Selected",
+        description: "Please select a format first",
+      });
+      return;
+    }
+
     const targetUrl = video?.url || url;
     if (!targetUrl || isDownloading) return;
 
@@ -65,62 +117,41 @@ export default function Downloader() {
     setProgress(0);
 
     try {
-      // 1. Ask backend for the stream URL
-      const res = await downloadVideo({ url: targetUrl, format, quality });
-      if (!res?.success || !res?.url) {
-        throw new Error(res?.error || "Could not start download.");
-      }
-
-      // 2. Fetch the actual file with progress tracking
-      setDlPhase("transferring");
-      const controller = new AbortController();
-      abortRef.current = controller;
-
-      const response = await fetch(res.url, { signal: controller.signal });
-      if (!response.ok) {
-        const text = await response.text().catch(() => "");
-        throw new Error(text || `Download failed (${response.status})`);
-      }
-
-      const total = Number(response.headers.get("Content-Length")) || 0;
-      const reader = response.body.getReader();
-      const chunks = [];
-      let received = 0;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        received += value.length;
-        if (total > 0) {
-          setProgress(Math.min(99, Math.round((received / total) * 100)));
-        }
-      }
-
-      setProgress(100);
-      setDlPhase("done");
-
-      // 3. Trigger browser save
-      const blob = new Blob(chunks);
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `${(video?.title || "video").replace(/[^\w\s-]/g, "").slice(0, 80)}.${format}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-
-      toast({
-        title: "Download complete",
-        description: `${format.toUpperCase()} saved to your device.`,
+      // Get direct URL from backend
+      const result = await getDirectDownloadUrl({
+        url: targetUrl,
+        formatId: selectedFormat.format_id
       });
 
-      // Reset after a short moment
-      setTimeout(() => {
-        setDlPhase("idle");
-        setProgress(0);
-      }, 1800);
+      if (result?.success && result?.directUrl) {
+        // Simulate some progress while we prepare the download        setProgress(50);
+        
+        // Trigger browser download directly from the CDN
+        const a = document.createElement("a");
+        a.href = result.directUrl;
+        a.target = "_blank";
+        a.download = `${(video?.title || "video").replace(/[^\w\s-]/g, "").slice(0, 80)}_${selectedFormat.format_id}.${selectedFormat.ext}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+
+        setProgress(100);
+        setDlPhase("done");
+
+        toast({
+          title: "Download Started",
+          description: `Downloading ${selectedFormat.label || selectedFormat.format_id} (${selectedFormat.ext.toUpperCase()})`,
+        });
+
+        // Reset after a short moment
+        setTimeout(() => {
+          setDlPhase("idle");
+          setProgress(0);
+        }, 1800);
+        return;
+      } else {
+        throw new Error(result?.error || "Could not get direct download URL");
+      }
     } catch (err) {
       if (err.name === "AbortError") return;
       setDlPhase("idle");
@@ -128,18 +159,40 @@ export default function Downloader() {
       toast({
         variant: "destructive",
         title: "Download failed",
-        description: err.message || "Something went wrong while downloading.",
+        description: err.message || "Something went wrong while starting the download.",
       });
     } finally {
       abortRef.current = null;
     }
   };
 
+  const getFormatIcon = (format) => {
+    if (format.has_video && format.has_audio) return Film;
+    if (format.has_video) return Film;
+    if (format.has_audio) return Music;
+    return Download;
+  };
+
+  const getFormatTypeLabel = (format) => {
+    if (format.has_video && format.has_audio) return "Video + Audio";
+    if (format.has_video) return "Video Only";
+    if (format.has_audio) return "Audio Only";
+    return "Unknown";
+  };
+
+  const getFormatDescription = (format) => {
+    const parts = [];
+    if (format.height) parts.push(`${format.height}p`);
+    if (format.fps && format.fps > 30) parts.push(`${format.fps}fps`);
+    if (format.abr) parts.push(`${Math.round(format.abr)}kbps`);
+    if (format.codec_info) parts.push(format.codec_info);
+    return parts.length > 0 ? parts.join(" ") : format.format_id;
+  };
+
   const statusLabel = {
-    idle: `Download ${format === "mp3" ? "MP3" : quality}`,
-    extracting: "Extracting from YouTube…",
-    transferring: progress > 0 ? `Downloading ${progress}%` : "Receiving file…",
-    done: "Saved",
+    idle: selectedFormat ? `Download ${selectedFormat.ext.toUpperCase()}` : "Select a Format",
+    extracting: "Extracting direct URL...",
+    done: "Download Started",
   }[dlPhase];
 
   return (
@@ -151,7 +204,7 @@ export default function Downloader() {
             Downloader
           </h1>
           <p className="mt-1 text-sm font-medium text-black/55">
-            Paste a link, pick a quality, and grab it.
+            Paste a link, pick a format, and grab it.
           </p>
 
           <div className="mt-5 flex flex-col gap-2 sm:flex-row">
@@ -181,7 +234,7 @@ export default function Downloader() {
             </div>
           )}
 
-          {loading && (
+          {loading && !video && (
             <div className="mt-5 flex items-center justify-center border-2 border-dashed border-black bg-white py-16">
               <Loader2 className="h-6 w-6 animate-spin text-black" strokeWidth={3} />
             </div>
@@ -209,47 +262,90 @@ export default function Downloader() {
                 <h3 className="font-display text-lg font-extrabold leading-tight text-black">{video.title}</h3>
                 <div className="mt-1 text-sm font-bold text-black/70">{video.channel}</div>
 
+                {/* Format Selection */}
                 <div className="mt-4">
-                  <div className="mb-2 text-[11px] font-bold uppercase tracking-widest text-black/50">Format</div>
-                  <div className="flex gap-2">
-                    {[
-                      { id: "mp4", label: "MP4", icon: Film },
-                      { id: "mp3", label: "MP3", icon: Music },
-                    ].map((f) => (
-                      <button
-                        key={f.id}
-                        onClick={() => !isDownloading && setFormat(f.id)}
-                        disabled={isDownloading}
-                        className={cn(
-                          "flex items-center gap-1.5 border-2 border-black px-3 py-2 text-xs font-bold uppercase nb-press",
-                          format === f.id ? "bg-black text-white" : "bg-white",
-                          isDownloading && "opacity-50"
-                        )}
-                      >
-                        <f.icon className="h-3.5 w-3.5" strokeWidth={2.5} /> {f.label}
-                      </button>
-                    ))}
+                  <div className="mb-2 text-[11px] font-bold uppercase tracking-widest text-black/50">
+                    Available Formats ({formats?.total || 0})
                   </div>
+                  
+                  {formatError && (
+                    <div className="mb-3 border-2 border-red-500 bg-red-50 px-3 py-2 text-sm font-medium text-red-600">
+                      {formatError}
+                    </div>
+                  )}
+
+                  {loadingFormats && !formats ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="h-5 w-5 animate-spin text-black" strokeWidth={3} />
+                    </div>
+                  ) : (
+                    <div className="max-h-96 overflow-y-auto scrollbar-nb">
+                      {formats?.formats?.length === 0 ? (
+                        <div className="text-center py-4 text-sm text-black/50">
+                          No formats available for this video.
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {formats?.formats?.map((format) => {
+                            const Icon = getFormatIcon(format);
+                            const isSelected = selectedFormat?.format_id === format.format_id;
+                            
+                            return (
+                              <button
+                                key={format.format_id}
+                                onClick={() => !isDownloading && handleSelectFormat(format)}
+                                disabled={isDownloading}
+                                className={cn(
+                                  "w-full flex items-center gap-3 border-2 border-black p-3 text-left nb-press",
+                                  isSelected 
+                                    ? "bg-black text-white shadow-[3px_3px_0_0_#000]" 
+                                    : "bg-white",
+                                  isDownloading && "opacity-50"
+                                )}
+                              >
+                                <div className="flex-shrink-0">
+                                  <Icon className="h-4 w-4" strokeWidth={2.5} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-sm font-bold">{getFormatDescription(format)}</div>
+                                  <div className="text-[11px] font-medium text-black/60">{getFormatTypeLabel(format)}</div>
+                                </div>
+                                <div className="flex-shrink-0">
+                                  <span className="text-[11px] font-bold border border-black px-2 py-0.5 bg-white text-black">
+                                    {format.ext.toUpperCase()}
+                                  </span>
+                                  {isSelected && (
+                                    <span className="ml-2 text-brand">
+                                      <Check className="h-4 w-4" strokeWidth={3} />
+                                    </span>
+                                  )}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
-                {format === "mp4" && (
-                  <div className="mt-4">
-                    <div className="mb-2 text-[11px] font-bold uppercase tracking-widest text-black/50">Quality</div>
-                    <div className="flex flex-wrap gap-2">
-                      {QUALITIES.map((q) => (
-                        <button
-                          key={q}
-                          onClick={() => !isDownloading && setQuality(q)}
-                          disabled={isDownloading}
-                          className={cn(
-                            "border-2 border-black px-3 py-2 text-xs font-bold uppercase nb-press",
-                            quality === q ? "bg-brand shadow-[3px_3px_0_0_#000]" : "bg-white",
-                            isDownloading && "opacity-50"
-                          )}
-                        >
-                          {q}
-                        </button>
-                      ))}
+                {selectedFormat && (
+                  <div className="mt-4 border-2 border-black bg-white p-3">
+                    <div className="text-[11px] font-bold uppercase tracking-widest text-black/50 mb-2">
+                      Selected Format
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-bold">{getFormatDescription(selectedFormat)}</div>
+                        <div className="text-[11px] text-black/60">{getFormatTypeLabel(selectedFormat)} • {selectedFormat.ext.toUpperCase()}</div>
+                      </div>
+                      <button 
+                        onClick={() => !isDownloading && setSelectedFormat(null)}
+                        disabled={isDownloading}
+                        className="text-black/40 hover:text-black disabled:opacity-50"
+                      >
+                        <X className="h-4 w-4" strokeWidth={2.5} />
+                      </button>
                     </div>
                   </div>
                 )}
@@ -259,7 +355,7 @@ export default function Downloader() {
                   <div className="mt-5">
                     <div className="mb-1.5 flex items-center justify-between text-[11px] font-bold uppercase tracking-widest">
                       <span className="text-black/60">{statusLabel}</span>
-                      {dlPhase === "transferring" && progress > 0 && (
+                      {progress > 0 && (
                         <span className="text-black">{progress}%</span>
                       )}
                     </div>
@@ -282,7 +378,7 @@ export default function Downloader() {
 
                 <button
                   onClick={handleDownload}
-                  disabled={isDownloading || dlPhase === "done"}
+                  disabled={!selectedFormat || isDownloading || dlPhase === "done"}
                   className="nb-btn-dark mt-5 w-full px-3 py-3 text-sm"
                 >
                   {dlPhase === "done" ? (
@@ -296,7 +392,7 @@ export default function Downloader() {
                 </button>
 
                 <p className="mt-2 text-center text-[11px] font-medium text-black/45">
-                  Powered by yt-dlp backend integration.
+                  Direct download from CDN - Powered by yt-dlp metadata extraction.
                 </p>
               </div>
             </div>

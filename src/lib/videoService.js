@@ -101,6 +101,44 @@ export async function searchYouTube(query) {
   throw new Error("Search service is unavailable. Start the VidGrab server and try again.");
 }
 
+/**
+ * Fetch available formats for a video (NEW - Direct link architecture)
+ * @param {string} url - Video URL
+ * @returns {Promise<Object>} - Object containing formats array and metadata
+ */
+export async function fetchVideoFormats(url) {
+  if (!url) throw new Error("URL is required");
+
+  try {
+    const res = await apiClient.getFormats(url);
+    return res;
+  } catch (err) {
+    console.error("Failed to fetch formats:", err);
+    throw new Error(`Could not fetch video formats: ${err.message}`);
+  }
+}
+
+/**
+ * Get direct download URL for a specific format (NEW - Direct link architecture)
+ * @param {string} url - Video URL
+ * @param {string} formatId - The format_id to download
+ * @returns {Promise<Object>} - Object containing direct URL and format metadata
+ */
+export async function getDirectDownloadUrl({ url, formatId }) {
+  if (!url) throw new Error("URL is required");
+  if (!formatId) throw new Error("Format ID is required");
+
+  try {
+    return await apiClient.getDirectUrl({ url, formatId });
+  } catch (err) {
+    console.error("Failed to get direct URL:", err);
+    throw new Error(`Could not get direct URL: ${err.message}`);
+  }
+}
+
+// Legacy download function - kept for backward compatibility
+// Use getDirectDownloadUrl() for the new direct-link architecture
 export async function downloadVideo({ url, format = "mp4", quality = "720p" }) {
+  console.warn("downloadVideo() is deprecated. Use getDirectDownloadUrl() instead.");
   return apiClient.downloadVideo({ url, format, quality });
 }
