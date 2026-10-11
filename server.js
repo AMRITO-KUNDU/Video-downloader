@@ -268,39 +268,16 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`[SERVER] Using external Cobalt API`);
   console.log(`[SERVER] COBALT_API_URL: ${process.env.COBALT_API_URL ? `***${process.env.COBALT_API_URL.substring(process.env.COBALT_API_URL.length - 20)}` : "NOT SET - WILL FAIL"}`);
   console.log(`[SERVER] ==================================\n`);
-  
-  // Warmup test - send a useless request to Cobalt to prevent cold start
-  if (process.env.COBALT_API_URL) {
-    console.log("[SERVER] Running Cobalt warmup test...");
-    const warmupUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"; // Rick Astley - perfect for warmup
-    const warmupPayload = {
-      url: warmupUrl,
-      downloadMode: "redirect",
-      localProcessing: "disabled",
-      videoQuality: "720",
-      youtubeVideoCodec: "h264"
+
+  // Keep the Cobalt instance warm with a simple HTTP request
+  const COBALT_URL = process.env.COBALT_API_URL;
+  if (COBALT_URL) {
+    const warmup = () => {
+      fetch(COBALT_URL).catch(() => {});
     };
-    
-    fetch(process.env.COBALT_API_URL, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        "User-Agent": "VidGrab-Warmup/2.0",
-      },
-      body: JSON.stringify(warmupPayload),
-      signal: AbortSignal.timeout(10000)
-    })
-    .then(response => {
-      if (response.ok) {
-        console.log("[SERVER] Cobalt warmup: SUCCESS");
-      } else {
-        console.warn("[SERVER] Cobalt warmup: HTTP " + response.status);
-      }
-    })
-    .catch(err => {
-      console.warn("[SERVER] Cobalt warmup failed:", err.message);
-    });
+    warmup();                             // once at startup
+    setInterval(warmup, 10 * 60 * 1000);  // repeat every 10 minutes
+    console.log("[SERVER] Cobalt warmup scheduled (every 10 minutes)");
   }
 });
 
