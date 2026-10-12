@@ -1,16 +1,26 @@
 /**
- * MeTube service — drop-in replacement for cobaltService.js
+ * MeTube service — replaces cobaltService.js
  *
- * Downloads  -> your self-hosted MeTube API (POST /add, GET /history, GET /download/<file>)
- * Search/Info -> YouTube Data API v3 (unchanged from the old service)
+ * Downloads   -> self-hosted MeTube API (POST /add, GET /history, GET /download/<file>)
+ * Search/Info -> YouTube Data API v3 (unchanged)
  *
  * Requires env var:
  *   METUBE_URL   e.g. https://your-metube.up.railway.app   (no trailing slash)
  *
  * MeTube endpoints used:
- *   POST /add                      { url, download_type, format, quality }
- *   GET  /history                  -> { done:[], queue:[], pending:[] }  (items have id,title,url,status,filename)
- *   GET  /download/<filename>      -> the finished file
+ *   POST /add   { url, download_type, format, quality }  -> { status: "ok" } | { status: "error", msg }
+ *   GET  /history -> { done: [], queue: [], pending: [] }
+ *                    each item: { id, url, title, status, filename, timestamp, error, download_type, ... }
+ *   GET  /download/<filename>       (video)  |  /audio_download/<filename>  (audio)
+ *
+ * Notes on MeTube's real behaviour (verified against its source):
+ *  - POST /add runs a yt-dlp extraction before returning, so it is NOT instant and
+ *    it can return {status:"error", msg:...} — we surface that immediately.
+ *  - A finished download lands in `done`; a FAILED one also lands in `done` but with
+ *    status "error". `done` is keyed by URL, so re-downloading the same URL overwrites
+ *    the entry (fresh `timestamp`) — we match on url + timestamp, not on filename.
+ *  - Video quality must be one of: best,2160,1440,1080,720,480,360,240,worst.
+ *    Audio (mp3) quality must be one of: best,320,192,128.
  */
 
 const METUBE_URL = (process.env.METUBE_URL || "").replace(/\/+$/, "");
@@ -26,7 +36,7 @@ if (!METUBE_URL) {
 const SUPPORTED_HOSTS = ["youtube.com", "youtu.be", "youtube-nocookie.com"];
 
 // ======================
-// Helpers (unchanged behaviour)
+// Helpers
 // ======================
 
 export function validateVideoUrl(value) {
@@ -80,7 +90,7 @@ function formatViews(n) {
   return `${n} views`;
 }
 
-// Same shape the frontend already expects (video+audio + audio-only)
+// Same shape the frontend already expects
 const STANDARD_FORMATS = [
   { format_id: "max", label: "Best Quality (Max)", height: 2160, ext: "mp4", type: "video+audio", has_video: true, has_audio: true },
   { format_id: "1080", label: "1080p Full HD", height: 1080, ext: "mp4", type: "video+audio", has_video: true, has_audio: true },
@@ -95,17 +105,16 @@ export async function getFormats(videoUrl) {
   return { videoUrl, formats: STANDARD_FORMATS, total: STANDARD_FORMATS.length };
 }
 
-// Map the app's format_id -> MeTube's { download_type, format, quality }
+// MeTube's exact allowed values (see format_catalog)
+const VIDEO_QUALITIES = ["best", "2160", "1440", "1080", "720", "480", "360", "240", "worst"];
+
 function mapToMetube(formatId) {
   const id = String(formatId);
   if (id === "audio_mp3" || id === "audio") {
     return { download_type: "audio", format: "mp3", quality: "320" };
   }
   const q = id.replace(/p$/, "");
-  const quality = ["best", "2160", "1440", "1080", "720", "480", "360", "240", "144"].includes(q)
-    ? q
-    : "720";
-  return { download_type: "video", format: "mp4", quality };
+  return { download_type: "video", format: "mp4", quality: VIDEO_QUALITIES.includes(q) ? q : "720" };
 }
 
 async function metubeFetch(path, options = {}, timeoutMs = 30000) {
@@ -113,74 +122,96 @@ async function metubeFetch(path, options = {}, timeoutMs = 30000) {
     ...options,
     signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!res.ok) throw new Error(`MeTube ${path} -> HTTP ${res.status}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`MeTube ${path} -> HTTP ${res.status} ${body.slice(0, 200)}`);
+  }
   return res.json();
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// The `timestamp` of the completed entry for a URL, if it is already in `done`.
+async function doneTimestamp(videoUrl) {
+  const h = await metubeFetch("/history");
+  const existing = (h.done || []).find((i) => i.url === videoUrl);
+  return existing ? existing.timestamp : null;
+}
+
 /**
  * Queue a download on MeTube and wait for it to finish.
- * Returns the same shape the old getDirectUrl returned, so the frontend is unchanged:
- * directUrl points at THIS backend's /api/file proxy (same-origin, with Content-Disposition).
+ * Returns the same shape the frontend expects: { success, directUrl, filename, ... }
+ * directUrl points at this backend's /api/file proxy (same-origin, attachment header).
  */
 export async function getDirectUrl(videoUrl, formatId = "720") {
   if (!validateVideoUrl(videoUrl)) throw new Error("Unsupported or invalid video URL");
 
   const meta = mapToMetube(formatId);
 
-  // Snapshot already-completed files so we can spot the new one.
-  const before = new Set(
-    (await metubeFetch("/history")).done.map((i) => i.filename).filter(Boolean)
+  // If this URL was already completed before, remember its timestamp so a
+  // re-download (which overwrites the same key in `done`) is still detected.
+  const beforeTs = await doneTimestamp(videoUrl);
+
+  // POST /add runs extraction first, so allow generous time.
+  const addRes = await metubeFetch(
+    "/add",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: videoUrl, ...meta }),
+    },
+    60000
   );
 
-  await metubeFetch("/add", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url: videoUrl, ...meta }),
-  });
+  if (addRes && addRes.status === "error") {
+    throw new Error(addRes.msg || "MeTube rejected the download");
+  }
 
   const deadline = Date.now() + 180000; // wait up to 3 min
-  let filename = null;
 
   while (Date.now() < deadline) {
     const h = await metubeFetch("/history");
+    const mine = [
+      ...(h.done || []),
+      ...(h.queue || []),
+      ...(h.pending || []),
+    ].filter((i) => i.url === videoUrl);
 
-    // Surface an error for this URL early
-    const failed = [...(h.done || []), ...(h.queue || []), ...(h.pending || [])].find(
-      (i) => i.url === videoUrl && i.error
-    );
-    if (failed) throw new Error(failed.error || "MeTube reported an error for this video");
-
-    const fresh = (h.done || []).find((i) => i.filename && !before.has(i.filename));
-    if (fresh) {
-      filename = fresh.filename;
-      break;
+    const failed = mine.find((i) => i.status === "error" || i.error);
+    if (failed) {
+      throw new Error(failed.error || failed.msg || "MeTube reported an error for this video");
     }
+
+    const finished = (h.done || []).find(
+      (i) => i.url === videoUrl && i.status === "finished" && i.filename
+    );
+    if (finished && (beforeTs === null || finished.timestamp !== beforeTs)) {
+      const isAudio = meta.download_type === "audio";
+      return {
+        success: true,
+        directUrl: `/api/file?name=${encodeURIComponent(finished.filename)}&type=${isAudio ? "audio" : "video"}`,
+        filename: finished.filename,
+        status: "ready",
+        format: {
+          format_id: formatId,
+          ext: isAudio ? "mp3" : "mp4",
+          label: meta.quality,
+          type: isAudio ? "audio-only" : "video+audio",
+          has_video: !isAudio,
+          has_audio: true,
+        },
+        contentType: isAudio ? "audio/mpeg" : "video/mp4",
+      };
+    }
+
     await sleep(2000);
   }
 
-  if (!filename) throw new Error("Timed out waiting for MeTube to finish the download");
-
-  return {
-    success: true,
-    directUrl: `/api/file?name=${encodeURIComponent(filename)}`,
-    filename,
-    status: "ready",
-    format: {
-      format_id: formatId,
-      ext: meta.download_type === "audio" ? "mp3" : "mp4",
-      label: meta.quality,
-      type: meta.download_type === "audio" ? "audio-only" : "video+audio",
-      has_video: meta.download_type !== "audio",
-      has_audio: true,
-    },
-    contentType: meta.download_type === "audio" ? "audio/mpeg" : "video/mp4",
-  };
+  throw new Error("Timed out waiting for MeTube to finish the download");
 }
 
 // ======================
-// Info + Search (YouTube Data API v3 — unchanged)
+// Info + Search (YouTube Data API v3)
 // ======================
 
 export async function getInfo(videoUrl) {

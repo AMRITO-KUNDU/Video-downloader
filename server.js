@@ -23,13 +23,13 @@ app.use(express.json());
 app.use((req, res, next) => {
   const start = Date.now();
   const logId = Math.random().toString(36).substring(2, 8);
-  console.log(`[${logId}] ${req.method} ${req.path} - Query:`, req.query, "Body:", req.body);
-  
-  res.on('finish', () => {
+  console.log(`[${logId}] ${req.method} ${req.path} - Query:`, req.query);
+
+  res.on("finish", () => {
     const duration = Date.now() - start;
     console.log(`[${logId}] ${req.method} ${req.path} - Status: ${res.statusCode} Duration: ${duration}ms`);
   });
-  
+
   next();
 });
 
@@ -39,227 +39,101 @@ app.use((req, res, next) => {
 
 // Search
 app.get("/api/search", async (req, res) => {
-  console.log("[API:/api/search] Called");
   const query = req.query.q;
-  console.log("[API:/api/search] Query:", query);
-
   if (!query || typeof query !== "string") {
-    console.log("[API:/api/search] Invalid query");
     return res.json({ videos: [] });
   }
-
   try {
-    console.log("[API:/api/search] Calling search...");
     const videos = await search(query);
-    console.log("[API:/api/search] Success, videos count:", videos?.length || 0);
     return res.json({ videos: videos || [] });
   } catch (err) {
     console.error("[API:/api/search] ERROR:", err.message);
-    console.error("[API:/api/search] Stack:", err.stack);
-    res.status(500).json({
-      error: "Search failed",
-      details: err.message
-    });
+    res.status(500).json({ error: "Search failed", details: err.message });
   }
 });
 
 // Video metadata
 app.get("/api/info", async (req, res) => {
-  console.log("[API:/api/info] Called");
   const videoUrl = req.query.url;
-  console.log("[API:/api/info] URL:", videoUrl);
-
   if (!videoUrl) {
-    console.log("[API:/api/info] URL parameter missing");
     return res.status(400).json({ error: "URL parameter required" });
   }
-
-  const isValid = validateVideoUrl(videoUrl);
-  console.log("[API:/api/info] URL valid:", isValid);
-  if (!isValid) {
+  if (!validateVideoUrl(videoUrl)) {
     return res.status(400).json({ error: "Unsupported video URL" });
   }
-
   try {
-    console.log("[API:/api/info] Calling getInfo...");
     const info = await getInfo(videoUrl);
-    console.log("[API:/api/info] Success, title:", info.title);
     return res.json(info);
   } catch (err) {
     console.error("[API:/api/info] ERROR:", err.message);
-    console.error("[API:/api/info] Stack:", err.stack);
-    res.status(500).json({
-      error: "Could not fetch video metadata",
-      details: err.message
-    });
+    res.status(500).json({ error: "Could not fetch video metadata", details: err.message });
   }
 });
 
 // Available formats
 app.get("/api/formats", async (req, res) => {
-  console.log("[API:/api/formats] Called");
   const videoUrl = req.query.url;
-  console.log("[API:/api/formats] URL:", videoUrl);
-
   if (!videoUrl) {
-    console.log("[API:/api/formats] URL parameter missing");
     return res.status(400).json({ error: "URL parameter required" });
   }
-
-  const isValid = validateVideoUrl(videoUrl);
-  console.log("[API:/api/formats] URL valid:", isValid);
-  if (!isValid) {
+  if (!validateVideoUrl(videoUrl)) {
     return res.status(400).json({ error: "Unsupported video URL" });
   }
-
   try {
-    console.log("[API:/api/formats] Calling getFormats...");
     const result = await getFormats(videoUrl);
-    console.log("[API:/api/formats] Success, formats count:", result.formats?.length || 0);
     return res.json(result);
   } catch (err) {
     console.error("[API:/api/formats] ERROR:", err.message);
-    console.error("[API:/api/formats] Stack:", err.stack);
-    res.status(500).json({
-      error: "Could not fetch video formats",
-      details: err.message
-    });
+    res.status(500).json({ error: "Could not fetch video formats", details: err.message });
   }
 });
 
-// Get direct download URL
+// Queue a download on MeTube, wait for it, return a same-origin file URL.
 app.get("/api/direct-url", async (req, res) => {
-  console.log("[API:/api/direct-url] Called");
-  const { url, format_id, bitrate } = req.query;
-  console.log("[API:/api/direct-url] URL:", url, "Format:", format_id, "Bitrate:", bitrate);
-
+  const { url, format_id } = req.query;
   if (!url) {
-    console.log("[API:/api/direct-url] URL parameter missing");
     return res.status(400).json({ error: "URL parameter required" });
   }
-
   if (!format_id) {
-    console.log("[API:/api/direct-url] format_id parameter missing");
     return res.status(400).json({ error: "format_id parameter required" });
   }
-
-  const isValid = validateVideoUrl(url);
-  console.log("[API:/api/direct-url] URL valid:", isValid);
-  if (!isValid) {
+  if (!validateVideoUrl(url)) {
     return res.status(400).json({ error: "Unsupported video URL" });
   }
-
   try {
-    console.log("[API:/api/direct-url] Calling getDirectUrl...");
-    const result = await getDirectUrl(url, format_id, bitrate);
-    console.log("[API:/api/direct-url] Success, status:", result.status, "URL:", result.directUrl ? `***${result.directUrl.substring(0, 50)}...` : "empty");
+    const result = await getDirectUrl(url, format_id);
     return res.json(result);
   } catch (err) {
     console.error("[API:/api/direct-url] ERROR:", err.message);
-    console.error("[API:/api/direct-url] Stack:", err.stack);
-    res.status(500).json({
-      error: "Could not extract direct URL",
-      details: err.message
-    });
+    res.status(500).json({ error: "Could not prepare the download", details: err.message });
   }
 });
 
-// Legacy download endpoint (kept for compatibility)
-app.post("/api/download", async (req, res) => {
-  console.log("[API:/api/download] Called");
-  const { url, format = "mp4", quality = "720p" } = req.body || {};
-  console.log("[API:/api/download] URL:", url, "Format:", format, "Quality:", quality);
-
-  if (!url) {
-    console.log("[API:/api/download] URL missing");
-    return res.status(400).json({ success: false, error: "URL is required" });
-  }
-
-  const isValid = validateVideoUrl(url);
-  console.log("[API:/api/download] URL valid:", isValid);
-  if (!isValid) {
-    return res.status(400).json({ success: false, error: "Unsupported video URL" });
-  }
-
-  try {
-    const formatId = format === "mp3" ? "audio_mp3" : quality;
-    console.log("[API:/api/download] Using formatId:", formatId);
-    console.log("[API:/api/download] Calling getDirectUrl...");
-    const result = await getDirectUrl(url, formatId);
-    console.log("[API:/api/download] Success, direct URL:", result.directUrl ? `***${result.directUrl.substring(0, 50)}...` : "empty");
-
-    return res.json({
-      success: true,
-      url: result.directUrl,
-      filename: result.filename,
-      format,
-      quality
-    });
-  } catch (err) {
-    console.error("[API:/api/download] ERROR:", err.message);
-    console.error("[API:/api/download] Stack:", err.stack);
-    return res.status(500).json({
-      success: false,
-      error: err.message
-    });
-  }
-});
-
-// Stream / redirect endpoint
-app.get("/api/stream", async (req, res) => {
-  console.log("[API:/api/stream] Called");
-  const { url, format = "mp4", quality = "720p" } = req.query;
-  console.log("[API:/api/stream] URL:", url, "Format:", format, "Quality:", quality);
-
-  if (!url) {
-    console.log("[API:/api/stream] URL parameter missing");
-    return res.status(400).send("URL parameter is required");
-  }
-
-  const isValid = validateVideoUrl(url);
-  console.log("[API:/api/stream] URL valid:", isValid);
-  if (!isValid) {
-    return res.status(400).send("Unsupported video URL");
-  }
-
-  try {
-    const formatId = format === "mp3" ? "audio_mp3" : quality;
-    console.log("[API:/api/stream] Using formatId:", formatId);
-    console.log("[API:/api/stream] Calling getDirectUrl...");
-    const result = await getDirectUrl(url, formatId);
-    console.log("[API:/api/stream] Redirecting to:", result.directUrl ? `***${result.directUrl.substring(0, 50)}...` : "empty");
-    return res.redirect(302, result.directUrl);
-  } catch (err) {
-    console.error("[API:/api/stream] ERROR:", err.message);
-    console.error("[API:/api/stream] Stack:", err.stack);
-    return res.status(500).send(`Failed to extract stream: ${err.message}`);
-  }
-});
-
-// Proxy a finished MeTube file through our own origin so the browser saves it.
+// Stream a finished MeTube file through our own origin so the browser saves it.
 app.get("/api/file", async (req, res) => {
-  console.log("[API:/api/file] Called");
   const name = req.query.name;
+  const type = req.query.type === "audio" ? "audio" : "video";
   if (!name || typeof name !== "string") {
     return res.status(400).send("name is required");
   }
-
   const base = (process.env.METUBE_URL || "").replace(/\/+$/, "");
   if (!base) {
     return res.status(500).send("METUBE_URL is not configured");
   }
-
+  const dir = type === "audio" ? "audio_download" : "download";
   try {
-    const upstream = await fetch(`${base}/download/${encodeURIComponent(name)}`);
+    const upstream = await fetch(`${base}/${dir}/${encodeURIComponent(name)}`);
     if (!upstream.ok || !upstream.body) {
       return res.status(502).send("Upstream file not available");
     }
+    // Never let the filename break out of the header.
+    const safeName = name.replace(/[\r\n"]/g, "");
     res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/octet-stream");
-    res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
     const { Readable } = await import("node:stream");
     Readable.fromWeb(upstream.body).pipe(res);
   } catch (err) {
-    console.error("[/api/file] ERROR:", err.message);
+    console.error("[API:/api/file] ERROR:", err.message);
     res.status(500).send("Failed to fetch file");
   }
 });
@@ -272,14 +146,10 @@ console.log("[SERVER] Setting up static file serving from:", path.join(__dirname
 app.use(express.static(path.join(__dirname, "dist")));
 
 app.get("*", (req, res) => {
-  console.log("[SERVER] Catch-all route, path:", req.path);
   const indexPath = path.join(__dirname, "dist", "index.html");
-
   if (fs.existsSync(indexPath)) {
-    console.log("[SERVER] Serving index.html");
     res.sendFile(indexPath);
   } else {
-    console.log("[SERVER] index.html not found, sending fallback message");
     res.send("VidGrab Backend API is running");
   }
 });
@@ -299,14 +169,14 @@ app.listen(PORT, "0.0.0.0", () => {
 });
 
 // Handle unhandled promise rejections
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('[SERVER] UNHANDLED REJECTION:', reason);
-  console.error('[SERVER] Promise:', promise);
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[SERVER] UNHANDLED REJECTION:", reason);
+  console.error("[SERVER] Promise:", promise);
 });
 
 // Handle uncaught exceptions
-process.on('uncaughtException', (err) => {
-  console.error('[SERVER] UNCAUGHT EXCEPTION:', err.message);
-  console.error('[SERVER] Stack:', err.stack);
+process.on("uncaughtException", (err) => {
+  console.error("[SERVER] UNCAUGHT EXCEPTION:", err.message);
+  console.error("[SERVER] Stack:", err.stack);
   process.exit(1);
 });
