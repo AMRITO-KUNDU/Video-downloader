@@ -290,9 +290,14 @@ app.get("/api/direct-url", async (req, res) => {
 
   const body = toMeTubeBody(format_id, url);
 
+  // MeTube stores yt-dlp's NORMALIZED url (e.g. youtu.be/ID -> youtube.com/watch?v=ID),
+  // so match on the video id, never on the url the user pasted.
+  const vid = extractYouTubeId(url);
+  const matches = (i) => (vid ? i.id === vid : i.url === url);
+
   try {
     const before =
-      (await metube("/history")).done?.find((i) => i.url === url)?.timestamp ?? null;
+      (await metube("/history")).done?.find(matches)?.timestamp ?? null;
 
     const added = await metube("/add", {
       method: "POST",
@@ -306,9 +311,7 @@ app.get("/api/direct-url", async (req, res) => {
     const deadline = Date.now() + 180000;
     while (Date.now() < deadline) {
       const h = await metube("/history");
-      const mine = [...(h.done || []), ...(h.queue || []), ...(h.pending || [])].filter(
-        (i) => i.url === url
-      );
+      const mine = [...(h.done || []), ...(h.queue || []), ...(h.pending || [])].filter(matches);
 
       const failed = mine.find((i) => i.status === "error" || i.error);
       if (failed) {
@@ -316,7 +319,7 @@ app.get("/api/direct-url", async (req, res) => {
       }
 
       const finished = (h.done || []).find(
-        (i) => i.url === url && i.status === "finished" && i.filename
+        (i) => matches(i) && i.status === "finished" && i.filename
       );
       if (finished && (before === null || finished.timestamp !== before)) {
         const audio = body.download_type === "audio";
