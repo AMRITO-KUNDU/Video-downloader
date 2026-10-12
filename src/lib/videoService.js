@@ -5,7 +5,7 @@ import { apiClient } from "@/api/apiClient";
  */
 export function isVideoUrl(text) {
   if (!text || typeof text !== "string") return false;
-  return /(youtube\.com|youtu\.be|youtube-nocookie\.com)/i.test(
+  return /(youtube\.com|youtu\.be|youtube-nocookie\.com|facebook\.com|fb\.watch|fb\.me)/i.test(
     text.trim()
   );
 }

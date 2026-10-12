@@ -1,8 +1,8 @@
 /**
  * VidGrab backend
  *
- *  Search + metadata -> YouTube Data API v3 (as before)
- *  Downloads         -> self-hosted MeTube (its own API)
+ *  Search + metadata -> YouTube Data API v3 (search stays YouTube-only)
+ *  Downloads         -> self-hosted MeTube (its own API); accepts YouTube + Facebook
  *
  * MeTube API used:
  *   POST /add              { url, download_type, format, quality } -> { status: "ok" | "error", msg? }
@@ -47,12 +47,38 @@ const YOUTUBE_RE =
   /^https?:\/\/(www\.|m\.)?(youtube\.com|youtu\.be|youtube-nocookie\.com)\//i;
 const isYouTube = (u) => typeof u === "string" && YOUTUBE_RE.test(u);
 
+// Facebook — MeTube/yt-dlp handles public videos, Reels, /videos/ links and
+// fb.watch short links; private/friends-only ones need cookies.
+const FACEBOOK_RE =
+  /^https?:\/\/(www\.|m\.|web\.|mbasic\.)?(facebook\.com|fb\.watch|fb\.me)\//i;
+const isFacebook = (u) => typeof u === "string" && FACEBOOK_RE.test(u);
+
+// Anything MeTube can take. Search stays YouTube-only; downloads accept both.
+const isSupported = (u) => isYouTube(u) || isFacebook(u);
+
 function extractYouTubeId(url) {
   if (!url || typeof url !== "string") return null;
   const match = url.match(
     /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|v\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/
   );
   return match ? match[1] : null;
+}
+
+// Facebook's numeric video id for the common link shapes. Share/fb.watch links
+// carry no id here — those get matched as "newly finished" instead.
+function extractFacebookId(url) {
+  if (!url || typeof url !== "string") return null;
+  const patterns = [
+    /facebook\.com\/reel\/(\d+)/i,
+    /facebook\.com\/videos\/(\d+)/i,
+    /facebook\.com\/[^/?#]+\/videos\/(?:[^/?#]+\/)?(\d+)/i,
+    /[?&]v=(\d+)/i,
+  ];
+  for (const re of patterns) {
+    const m = url.match(re);
+    if (m) return m[1];
+  }
+  return null;
 }
 
 function parseIsoDuration(iso) {
@@ -193,7 +219,7 @@ app.get("/api/search", async (req, res) => {
 // Video metadata
 app.get("/api/info", async (req, res) => {
   const videoUrl = req.query.url;
-  if (!isYouTube(videoUrl)) {
+  if (!isSupported(videoUrl)) {
     return res.status(400).json({ error: "Unsupported video URL" });
   }
 
@@ -255,8 +281,8 @@ app.get("/api/info", async (req, res) => {
   }
 
   res.json({
-    title: ytId ? `YouTube Video (${ytId})` : "YouTube Video",
-    channel: "YouTube Creator",
+    title: ytId ? `YouTube Video (${ytId})` : isFacebook(videoUrl) ? "Facebook Video" : "Video",
+    channel: ytId ? "YouTube Creator" : "Media Service",
     views: "--",
     uploadDate: "--",
     duration: "--",
@@ -273,7 +299,7 @@ app.get("/api/info", async (req, res) => {
 
 app.get("/api/formats", (req, res) => {
   const url = req.query.url;
-  if (!isYouTube(url)) {
+  if (!isSupported(url)) {
     return res.status(400).json({ error: "Unsupported video URL" });
   }
   res.json({ videoUrl: url, formats: FORMATS, total: FORMATS.length });
@@ -281,7 +307,7 @@ app.get("/api/formats", (req, res) => {
 
 app.get("/api/direct-url", async (req, res) => {
   const { url, format_id } = req.query;
-  if (!isYouTube(url)) {
+  if (!isSupported(url)) {
     return res.status(400).json({ error: "Unsupported video URL" });
   }
   if (!format_id) {
@@ -290,14 +316,22 @@ app.get("/api/direct-url", async (req, res) => {
 
   const body = toMeTubeBody(format_id, url);
 
-  // MeTube stores yt-dlp's NORMALIZED url (e.g. youtu.be/ID -> youtube.com/watch?v=ID),
-  // so match on the video id, never on the url the user pasted.
+  // MeTube stores yt-dlp's NORMALIZED url and numeric id, which can differ from
+  // what the user pasted (youtu.be/ID -> youtube.com/watch?v=ID, or a Facebook
+  // share/fb.watch link). Match on the video id when we can; for Facebook share
+  // links that carry no id, fall back to "a newly finished item".
   const vid = extractYouTubeId(url);
-  const matches = (i) => (vid ? i.id === vid : i.url === url);
+  const fbId = extractFacebookId(url);
+  const canMatchById = Boolean(vid || fbId);
+  const matches = (i) =>
+    vid ? i.id === vid : fbId ? i.id === fbId : i.url === url;
 
   try {
-    const before =
-      (await metube("/history")).done?.find(matches)?.timestamp ?? null;
+    const beforeDone = (await metube("/history")).done || [];
+    const beforeKeys = new Set(beforeDone.map((i) => i.id || i.url));
+    const beforeTs = beforeDone.find(matches)?.timestamp ?? null;
+    const mine = (i) =>
+      matches(i) || (!canMatchById && !beforeKeys.has(i.id || i.url));
 
     const added = await metube("/add", {
       method: "POST",
@@ -311,17 +345,19 @@ app.get("/api/direct-url", async (req, res) => {
     const deadline = Date.now() + 180000;
     while (Date.now() < deadline) {
       const h = await metube("/history");
-      const mine = [...(h.done || []), ...(h.queue || []), ...(h.pending || [])].filter(matches);
+      const all = [...(h.done || []), ...(h.queue || []), ...(h.pending || [])];
 
-      const failed = mine.find((i) => i.status === "error" || i.error);
+      const failed = all.find((i) => mine(i) && (i.status === "error" || i.error));
       if (failed) {
         return res.status(502).json({ error: failed.error || failed.msg || "Download failed" });
       }
 
-      const finished = (h.done || []).find(
-        (i) => matches(i) && i.status === "finished" && i.filename
-      );
-      if (finished && (before === null || finished.timestamp !== before)) {
+      const finished = (h.done || []).find((i) => {
+        if (!mine(i) || i.status !== "finished" || !i.filename) return false;
+        // Ignore the same item we saw before adding (re-download of one video).
+        return !(matches(i) && beforeTs !== null && i.timestamp === beforeTs);
+      });
+      if (finished) {
         const audio = body.download_type === "audio";
         return res.json({
           success: true,

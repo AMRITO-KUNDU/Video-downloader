@@ -118,7 +118,7 @@ export default function Downloader() {
     const u = (override ?? url).trim();
     if (!u) return;
     if (!isVideoUrl(u)) {
-      setError("Paste a valid YouTube video link.");
+      setError("Paste a valid YouTube or Facebook video link.");
       setVideo(null);
       setFormats(null);
       return;
@@ -200,7 +200,7 @@ export default function Downloader() {
 
   const statusLabel = {
     idle: formatType === "mp3" ? `Download ${audioBitrate} MP3` : `Download ${quality} MP4`,
-    extracting: "Extracting from YouTube…",
+    extracting: "Extracting…",
     done: "Saved",
   }[dlPhase];
 
@@ -227,7 +227,7 @@ export default function Downloader() {
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleFetch()}
-                placeholder="https://youtube.com/watch?v=…"
+                placeholder="https://youtube.com/watch?v=…  ·  or a Facebook link"
                 className="w-full bg-transparent px-2 py-2.5 text-sm font-medium placeholder:text-black/40 focus:outline-none"
               />
             </div>
@@ -265,7 +265,7 @@ export default function Downloader() {
                 <Download className="h-7 w-7" strokeWidth={2.5} />
               </div>
               <h3 className="mt-4 font-display text-xl font-extrabold">Paste a video link to begin</h3>
-              <p className="mt-1 text-sm font-medium text-black/55">YouTube links supported.</p>
+              <p className="mt-1 text-sm font-medium text-black/55">YouTube and Facebook links supported.</p>
             </div>
           )}
 

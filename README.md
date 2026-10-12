@@ -19,6 +19,9 @@ No accounts. No limits. No nonsense.
 - **Lightning-fast downloads**  
   Get MP4 and MP3 in the quality you actually want — 1080p, 720p, 480p, or pure audio.
 
+- **YouTube and Facebook**  
+  Download from YouTube, or paste a public Facebook video or Reel link.
+
 - **Clean search experience**  
   Search YouTube and instantly preview titles, channels, duration, and thumbnails.
 
@@ -29,13 +32,20 @@ No accounts. No limits. No nonsense.
 
 ### How it works
 
-1. Paste any supported video link  
+1. Paste a YouTube or Facebook video link  
 2. Pick your preferred format and quality  
 3. Hit download  
 
 That’s it.
 
 VidGrab handles the rest behind the scenes — extracting the best available stream and delivering it directly to you.
+
+---
+
+### Supported sources
+
+- **YouTube** — videos and Shorts, as MP4 (up to 1080p) or MP3. Search is YouTube-only.
+- **Facebook** — public videos and Reels. Private or friends-only videos may need account cookies.
 
 ---
 
