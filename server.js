@@ -1,182 +1,225 @@
+/**
+ * VidGrab backend — a simple wrapper over a self-hosted MeTube instance.
+ *
+ * MeTube is the download engine. This backend exposes only what the frontend
+ * needs, using MeTube's own API and its exact option values.
+ *
+ * MeTube API used (per https://github.com/alexta69/metube):
+ *   POST /add              { url, download_type, format, quality } -> { status: "ok" | "error", msg? }
+ *   GET  /history          -> { done: [], queue: [], pending: [] }
+ *   GET  /download/<file>       (video files)
+ *   GET  /audio_download/<file> (audio files)
+ *   GET  /version
+ *
+ * MeTube option values this app uses (all natively supported):
+ *   video: download_type=video, format=mp4, quality in best|2160|1440|1080|720|480|360|240|worst
+ *   audio: download_type=audio, format=mp3, quality in 320|192|128
+ *
+ * Env:
+ *   METUBE_URL  (required)  e.g. https://your-metube.up.railway.app
+ *
+ * Removed on purpose (MeTube does not provide these): search, video metadata.
+ */
+
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 
-console.log("[SERVER] Starting VidGrab server...");
-
-import {
-  getInfo,
-  getFormats,
-  getDirectUrl,
-  validateVideoUrl,
-  search
-} from "./src/lib/metubeService.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const METUBE = (process.env.METUBE_URL || "").replace(/\/+$/, "");
+if (!METUBE) {
+  console.error("[SERVER] FATAL: METUBE_URL is not set. Set it to your MeTube URL.");
+  process.exit(1);
+}
 
 const app = express();
 app.use(express.json());
 
-// Request logging middleware
-app.use((req, res, next) => {
-  const start = Date.now();
-  const logId = Math.random().toString(36).substring(2, 8);
-  console.log(`[${logId}] ${req.method} ${req.path} - Query:`, req.query);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    console.log(`[${logId}] ${req.method} ${req.path} - Status: ${res.statusCode} Duration: ${duration}ms`);
+// ======================
+// Helpers
+// ======================
+
+const YOUTUBE_RE =
+  /^https?:\/\/(www\.|m\.)?(youtube\.com|youtu\.be|youtube-nocookie\.com)\//i;
+const isYouTube = (u) => typeof u === "string" && YOUTUBE_RE.test(u);
+
+// MeTube's exact allowed values (from its format catalog)
+const VIDEO_QUALITIES = ["best", "2160", "1440", "1080", "720", "480", "360", "240", "worst"];
+
+// The choices we expose to the UI — every one is natively supported by MeTube
+const FORMATS = [
+  { format_id: "max", label: "Best Quality", height: 2160, ext: "mp4", type: "video+audio", has_video: true, has_audio: true },
+  { format_id: "1080", label: "1080p", height: 1080, ext: "mp4", type: "video+audio", has_video: true, has_audio: true },
+  { format_id: "720", label: "720p", height: 720, ext: "mp4", type: "video+audio", has_video: true, has_audio: true },
+  { format_id: "480", label: "480p", height: 480, ext: "mp4", type: "video+audio", has_video: true, has_audio: true },
+  { format_id: "360", label: "360p", height: 360, ext: "mp4", type: "video+audio", has_video: true, has_audio: true },
+  { format_id: "mp3", label: "MP3 (320 kbps)", height: null, abr: 320, ext: "mp3", type: "audio-only", has_video: false, has_audio: true },
+];
+
+// Map the app's format_id -> MeTube's new-style request body
+function toMeTubeBody(formatId, url) {
+  const id = String(formatId || "720");
+  if (id === "mp3" || id === "audio" || id === "audio_mp3") {
+    return { url, download_type: "audio", format: "mp3", quality: "320" };
+  }
+  const q = id.replace(/p$/, "");
+  return {
+    url,
+    download_type: "video",
+    format: "mp4",
+    quality: VIDEO_QUALITIES.includes(q) ? q : "720",
+  };
+}
+
+async function metube(pathname, options = {}, timeoutMs = 60000) {
+  const res = await fetch(`${METUBE}${pathname}`, {
+    ...options,
+    signal: AbortSignal.timeout(timeoutMs),
   });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`MeTube ${pathname} -> HTTP ${res.status} ${body.slice(0, 200)}`);
+  }
+  return res.json();
+}
 
-  next();
-});
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ======================
-// API Routes
+// Routes
 // ======================
 
-// Search
-app.get("/api/search", async (req, res) => {
-  const query = req.query.q;
-  if (!query || typeof query !== "string") {
-    return res.json({ videos: [] });
-  }
-  try {
-    const videos = await search(query);
-    return res.json({ videos: videos || [] });
-  } catch (err) {
-    console.error("[API:/api/search] ERROR:", err.message);
-    res.status(500).json({ error: "Search failed", details: err.message });
-  }
-});
-
-// Video metadata
-app.get("/api/info", async (req, res) => {
-  const videoUrl = req.query.url;
-  if (!videoUrl) {
-    return res.status(400).json({ error: "URL parameter required" });
-  }
-  if (!validateVideoUrl(videoUrl)) {
+// The format choices this app offers
+app.get("/api/formats", (req, res) => {
+  const url = req.query.url;
+  if (!isYouTube(url)) {
     return res.status(400).json({ error: "Unsupported video URL" });
   }
-  try {
-    const info = await getInfo(videoUrl);
-    return res.json(info);
-  } catch (err) {
-    console.error("[API:/api/info] ERROR:", err.message);
-    res.status(500).json({ error: "Could not fetch video metadata", details: err.message });
-  }
+  res.json({ videoUrl: url, formats: FORMATS, total: FORMATS.length });
 });
 
-// Available formats
-app.get("/api/formats", async (req, res) => {
-  const videoUrl = req.query.url;
-  if (!videoUrl) {
-    return res.status(400).json({ error: "URL parameter required" });
-  }
-  if (!validateVideoUrl(videoUrl)) {
-    return res.status(400).json({ error: "Unsupported video URL" });
-  }
-  try {
-    const result = await getFormats(videoUrl);
-    return res.json(result);
-  } catch (err) {
-    console.error("[API:/api/formats] ERROR:", err.message);
-    res.status(500).json({ error: "Could not fetch video formats", details: err.message });
-  }
-});
-
-// Queue a download on MeTube, wait for it, return a same-origin file URL.
+// Queue a download on MeTube, wait for it, return a same-origin file URL
 app.get("/api/direct-url", async (req, res) => {
   const { url, format_id } = req.query;
-  if (!url) {
-    return res.status(400).json({ error: "URL parameter required" });
-  }
-  if (!format_id) {
-    return res.status(400).json({ error: "format_id parameter required" });
-  }
-  if (!validateVideoUrl(url)) {
+  if (!isYouTube(url)) {
     return res.status(400).json({ error: "Unsupported video URL" });
   }
+  if (!format_id) {
+    return res.status(400).json({ error: "format_id required" });
+  }
+
+  const body = toMeTubeBody(format_id, url);
+
   try {
-    const result = await getDirectUrl(url, format_id);
-    return res.json(result);
+    // If this URL was already completed before, remember its timestamp so a
+    // re-download (MeTube keys `done` by URL) is still detected as new.
+    const before =
+      (await metube("/history")).done?.find((i) => i.url === url)?.timestamp ?? null;
+
+    const added = await metube("/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (added?.status === "error") {
+      return res.status(502).json({ error: added.msg || "MeTube rejected the download" });
+    }
+
+    const deadline = Date.now() + 180000;
+    while (Date.now() < deadline) {
+      const h = await metube("/history");
+      const mine = [...(h.done || []), ...(h.queue || []), ...(h.pending || [])].filter(
+        (i) => i.url === url
+      );
+
+      const failed = mine.find((i) => i.status === "error" || i.error);
+      if (failed) {
+        return res.status(502).json({ error: failed.error || failed.msg || "Download failed" });
+      }
+
+      const finished = (h.done || []).find(
+        (i) => i.url === url && i.status === "finished" && i.filename
+      );
+      if (finished && (before === null || finished.timestamp !== before)) {
+        const audio = body.download_type === "audio";
+        return res.json({
+          success: true,
+          directUrl: `/api/file?name=${encodeURIComponent(finished.filename)}&type=${audio ? "audio" : "video"}`,
+          filename: finished.filename,
+          ext: audio ? "mp3" : "mp4",
+          format_id,
+        });
+      }
+      await sleep(2000);
+    }
+    return res.status(504).json({ error: "Timed out waiting for MeTube" });
   } catch (err) {
-    console.error("[API:/api/direct-url] ERROR:", err.message);
-    res.status(500).json({ error: "Could not prepare the download", details: err.message });
+    console.error("[/api/direct-url] ERROR:", err.message);
+    return res.status(500).json({ error: err.message });
   }
 });
 
-// Stream a finished MeTube file through our own origin so the browser saves it.
+// Stream a finished file through our own origin so the browser saves it
 app.get("/api/file", async (req, res) => {
-  const name = req.query.name;
-  const type = req.query.type === "audio" ? "audio" : "video";
+  const { name, type } = req.query;
   if (!name || typeof name !== "string") {
-    return res.status(400).send("name is required");
-  }
-  const base = (process.env.METUBE_URL || "").replace(/\/+$/, "");
-  if (!base) {
-    return res.status(500).send("METUBE_URL is not configured");
+    return res.status(400).send("name required");
   }
   const dir = type === "audio" ? "audio_download" : "download";
   try {
-    const upstream = await fetch(`${base}/${dir}/${encodeURIComponent(name)}`);
+    const upstream = await fetch(`${METUBE}/${dir}/${encodeURIComponent(name)}`);
     if (!upstream.ok || !upstream.body) {
-      return res.status(502).send("Upstream file not available");
+      return res.status(502).send("File not available");
     }
-    // Never let the filename break out of the header.
-    const safeName = name.replace(/[\r\n"]/g, "");
     res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/octet-stream");
-    res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
+    res.setHeader("Content-Disposition", `attachment; filename="${name.replace(/[\r\n"]/g, "")}"`);
     const { Readable } = await import("node:stream");
     Readable.fromWeb(upstream.body).pipe(res);
   } catch (err) {
-    console.error("[API:/api/file] ERROR:", err.message);
+    console.error("[/api/file] ERROR:", err.message);
     res.status(500).send("Failed to fetch file");
   }
 });
 
-// ======================
-// Frontend
-// ======================
+// MeTube's download history / queue, passed straight through
+app.get("/api/history", async (_req, res) => {
+  try {
+    res.json(await metube("/history"));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
 
-console.log("[SERVER] Setting up static file serving from:", path.join(__dirname, "dist"));
-app.use(express.static(path.join(__dirname, "dist")));
-
-app.get("*", (req, res) => {
-  const indexPath = path.join(__dirname, "dist", "index.html");
-  if (fs.existsSync(indexPath)) {
-    res.sendFile(indexPath);
-  } else {
-    res.send("VidGrab Backend API is running");
+// Diagnostics: is MeTube reachable?
+app.get("/api/health", async (_req, res) => {
+  try {
+    const v = await fetch(`${METUBE}/version`, { signal: AbortSignal.timeout(10000) });
+    res.json({ ok: true, metube: METUBE, version: (await v.text()).trim() });
+  } catch (err) {
+    res.json({ ok: false, metube: METUBE, error: err.message });
   }
 });
 
 // ======================
-// Start server
+// Frontend (built React app)
+// ======================
+
+app.use(express.static(path.join(__dirname, "dist")));
+
+app.get("*", (_req, res) => {
+  const index = path.join(__dirname, "dist", "index.html");
+  if (fs.existsSync(index)) res.sendFile(index);
+  else res.send("VidGrab backend is running");
+});
+
+// ======================
+// Start
 // ======================
 
 const PORT = process.env.PORT || 10000;
-
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`\n[SERVER] ==================================`);
-  console.log(`[SERVER] VidGrab server running on port ${PORT}`);
-  console.log(`[SERVER] Using self-hosted MeTube API`);
-  console.log(`[SERVER] METUBE_URL: ${process.env.METUBE_URL ? `***${process.env.METUBE_URL.substring(process.env.METUBE_URL.length - 20)}` : "NOT SET - WILL FAIL"}`);
-  console.log(`[SERVER] ==================================\n`);
-});
-
-// Handle unhandled promise rejections
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("[SERVER] UNHANDLED REJECTION:", reason);
-  console.error("[SERVER] Promise:", promise);
-});
-
-// Handle uncaught exceptions
-process.on("uncaughtException", (err) => {
-  console.error("[SERVER] UNCAUGHT EXCEPTION:", err.message);
-  console.error("[SERVER] Stack:", err.stack);
-  process.exit(1);
+  console.log(`[SERVER] VidGrab backend on port ${PORT}`);
+  console.log(`[SERVER] MeTube: ${METUBE}`);
 });
