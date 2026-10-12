@@ -378,6 +378,52 @@ app.get("/api/health", async (_req, res) => {
   }
 });
 
+// Diagnostic: run the whole chain step by step and report each result.
+// Open in a browser, e.g.
+//   /api/debug?url=https://youtu.be/ID&format=mp4&quality=720
+//   /api/debug?url=https://youtu.be/ID&format=any&quality=best
+app.get("/api/debug", async (req, res) => {
+  const url = req.query.url;
+  const format = req.query.format || "mp4";   // app default; UI default is "any"
+  const quality = req.query.quality || "720";
+  const out = { metube: METUBE, tried: { url, format, quality } };
+
+  try {
+    const v = await fetch(`${METUBE}/version`, { signal: AbortSignal.timeout(10000) });
+    out.version = (await v.text()).trim();
+  } catch (err) {
+    out.version_error = err.message;
+  }
+
+  try {
+    out.cookie_status = await metube("/cookie-status");
+  } catch (err) {
+    out.cookie_status_error = err.message;
+  }
+
+  const vid = extractYouTubeId(url);
+  try {
+    out.add = await metube("/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, download_type: "video", format, quality }),
+    });
+  } catch (err) {
+    out.add_error = err.message;
+  }
+
+  await sleep(8000);
+  try {
+    const h = await metube("/history");
+    const all = [...(h.done || []), ...(h.queue || []), ...(h.pending || [])];
+    out.item = all.find((i) => (vid ? i.id === vid : i.url === url)) || null;
+  } catch (err) {
+    out.history_error = err.message;
+  }
+
+  res.json(out);
+});
+
 // ======================
 // Frontend (built React app)
 // ======================
