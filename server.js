@@ -26,7 +26,10 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 
-const METUBE = (process.env.METUBE_URL || "").replace(/\/+$/, "");
+let METUBE = (process.env.METUBE_URL || "").trim().replace(/\/+$/, "");
+// Accept a bare host (e.g. "my-metube.up.railway.app") and add the scheme,
+// so a missing https:// can never break the URL again.
+if (METUBE && !/^https?:\/\//i.test(METUBE)) METUBE = `https://${METUBE}`;
 if (!METUBE) {
   console.error("[SERVER] FATAL: METUBE_URL is not set. Set it to your MeTube URL.");
   process.exit(1);
