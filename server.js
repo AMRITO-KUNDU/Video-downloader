@@ -130,6 +130,14 @@ function toMeTubeBody(formatId, url) {
   if (id === "mp3" || id === "audio" || id === "audio_mp3") {
     return { url, download_type: "audio", format: "mp3", quality: "320" };
   }
+  // YouTube is happy with MeTube's "mp4" profile. Other sites (e.g. Facebook)
+  // often have no stream matching [height<=Q][ext=mp4]/[ext=m4a], so that
+  // selector fails with "Requested format is not available" / no formats.
+  // Use MeTube's own permissive defaults there — format "any", quality "best"
+  // (no filters), the same request its web UI sends — and let yt-dlp pick.
+  if (!isYouTube(url)) {
+    return { url, download_type: "video", format: "any", quality: "best" };
+  }
   const q = id.replace(/p$/, "");
   return {
     url,
