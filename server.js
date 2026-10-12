@@ -10,8 +10,8 @@ import {
   getFormats,
   getDirectUrl,
   validateVideoUrl,
-  search as cobaltSearch
-} from "./src/lib/cobaltService.js";
+  search
+} from "./src/lib/metubeService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -49,8 +49,8 @@ app.get("/api/search", async (req, res) => {
   }
 
   try {
-    console.log("[API:/api/search] Calling cobaltSearch...");
-    const videos = await cobaltSearch(query);
+    console.log("[API:/api/search] Calling search...");
+    const videos = await search(query);
     console.log("[API:/api/search] Success, videos count:", videos?.length || 0);
     return res.json({ videos: videos || [] });
   } catch (err) {
@@ -236,6 +236,34 @@ app.get("/api/stream", async (req, res) => {
   }
 });
 
+// Proxy a finished MeTube file through our own origin so the browser saves it.
+app.get("/api/file", async (req, res) => {
+  console.log("[API:/api/file] Called");
+  const name = req.query.name;
+  if (!name || typeof name !== "string") {
+    return res.status(400).send("name is required");
+  }
+
+  const base = (process.env.METUBE_URL || "").replace(/\/+$/, "");
+  if (!base) {
+    return res.status(500).send("METUBE_URL is not configured");
+  }
+
+  try {
+    const upstream = await fetch(`${base}/download/${encodeURIComponent(name)}`);
+    if (!upstream.ok || !upstream.body) {
+      return res.status(502).send("Upstream file not available");
+    }
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/octet-stream");
+    res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
+    const { Readable } = await import("node:stream");
+    Readable.fromWeb(upstream.body).pipe(res);
+  } catch (err) {
+    console.error("[/api/file] ERROR:", err.message);
+    res.status(500).send("Failed to fetch file");
+  }
+});
+
 // ======================
 // Frontend
 // ======================
@@ -265,20 +293,9 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`\n[SERVER] ==================================`);
   console.log(`[SERVER] VidGrab server running on port ${PORT}`);
-  console.log(`[SERVER] Using external Cobalt API`);
-  console.log(`[SERVER] COBALT_API_URL: ${process.env.COBALT_API_URL ? `***${process.env.COBALT_API_URL.substring(process.env.COBALT_API_URL.length - 20)}` : "NOT SET - WILL FAIL"}`);
+  console.log(`[SERVER] Using self-hosted MeTube API`);
+  console.log(`[SERVER] METUBE_URL: ${process.env.METUBE_URL ? `***${process.env.METUBE_URL.substring(process.env.METUBE_URL.length - 20)}` : "NOT SET - WILL FAIL"}`);
   console.log(`[SERVER] ==================================\n`);
-
-  // Keep the Cobalt instance warm with a simple HTTP request
-  const COBALT_URL = process.env.COBALT_API_URL;
-  if (COBALT_URL) {
-    const warmup = () => {
-      fetch(COBALT_URL).catch(() => {});
-    };
-    warmup();                             // once at startup
-    setInterval(warmup, 10 * 60 * 1000);  // repeat every 10 minutes
-    console.log("[SERVER] Cobalt warmup scheduled (every 10 minutes)");
-  }
 });
 
 // Handle unhandled promise rejections

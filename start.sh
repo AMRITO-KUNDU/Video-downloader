@@ -9,18 +9,18 @@ echo "Node version: $(node --version)"
 echo "Current directory: $(pwd)"
 echo ""
 
-# Check if COBALT_API_URL is set (will error on startup if not)
-echo "[STARTUP] Checking COBALT_API_URL..."
-if [ -z "$COBALT_API_URL" ]; then
-  echo "[STARTUP] ERROR: COBALT_API_URL is not set!"
-  echo "[STARTUP] Please set it to your external Cobalt instance URL."
-  echo "[STARTUP] Example: export COBALT_API_URL=https://your-cobalt.onrender.com"
-  echo "[STARTUP] NOTE: Configure cookies in your Cobalt instance (COOKIE_PATH or COOKIES env)"
+# Check if METUBE_URL is set (will error on startup if not)
+echo "[STARTUP] Checking METUBE_URL..."
+if [ -z "$METUBE_URL" ]; then
+  echo "[STARTUP] ERROR: METUBE_URL is not set!"
+  echo "[STARTUP] Please set it to your self-hosted MeTube instance URL."
+  echo "[STARTUP] Example: export METUBE_URL=https://your-metube.up.railway.app"
+  echo "[STARTUP] NOTE: Configure YouTube cookies in the MeTube instance if needed."
   exit 1
 fi
 
-echo "[STARTUP] COBALT_API_URL is set: ${COBALT_API_URL:0:50}..."
-echo "[STARTUP] Cookies: Configure in your Cobalt instance (COOKIE_PATH or COOKIES env var)"
+echo "[STARTUP] METUBE_URL is set: ${METUBE_URL:0:50}..."
+echo "[STARTUP] Cookies: Configure in your MeTube instance (upload in the UI or via YTDL_OPTIONS)"
 
 # Check if YOUTUBE_API_KEY is set (optional)
 echo "[STARTUP] Checking YOUTUBE_API_KEY..."
@@ -28,15 +28,6 @@ if [ -z "$YOUTUBE_API_KEY" ]; then
   echo "[STARTUP] WARNING: YOUTUBE_API_KEY is not set. YouTube metadata and search will be limited."
 else
   echo "[STARTUP] YOUTUBE_API_KEY is set"
-fi
-
-# Check if COBALT_FALLBACKS are set
-echo "[STARTUP] Checking fallback instances..."
-if [ -n "$COBALT_FALLBACK_1" ]; then
-  echo "[STARTUP] COBALT_FALLBACK_1 is set"
-fi
-if [ -n "$COBALT_FALLBACK_2" ]; then
-  echo "[STARTUP] COBALT_FALLBACK_2 is set"
 fi
 
 echo ""

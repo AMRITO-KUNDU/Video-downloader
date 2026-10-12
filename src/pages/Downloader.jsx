@@ -409,7 +409,7 @@ export default function Downloader() {
                 </button>
 
                 <p className="mt-2 text-center text-[11px] font-medium text-black/45">
-                  Direct download from CDN - Powered by Cobalt.
+                  Direct download via MeTube.
                 </p>
               </div>
             </div>

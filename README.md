@@ -45,7 +45,7 @@ VidGrab runs on a modern stack:
 
 - React + Vite for a snappy frontend  
 - Node.js backend  
-- Cobalt-powered media extraction  
+- MeTube-powered media extraction  
 - Docker-ready for easy deployment
 
 Everything is optimized to feel instant.

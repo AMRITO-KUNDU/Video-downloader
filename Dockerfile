@@ -1,5 +1,5 @@
 # ================================
-# VidGrab Downloader - External Cobalt Only
+# VidGrab Downloader - Self-hosted MeTube
 # ================================
 
 FROM node:24-alpine
