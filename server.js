@@ -235,6 +235,44 @@ app.get("/api/info", async (req, res) => {
   const defaultThumbnail = ytId ? `https://img.youtube.com/vi/${ytId}/hqdefault.jpg` : "";
   const apiKey = process.env.YOUTUBE_API_KEY;
 
+  // Facebook: no YouTube API and noembed rarely has the image — scrape the
+  // page's Open Graph tags (crawler UA) for a real title + thumbnail.
+  if (isFacebook(videoUrl)) {
+    try {
+      const page = await fetch(videoUrl, {
+        headers: {
+          "User-Agent":
+            "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+        },
+        signal: AbortSignal.timeout(15000),
+      });
+      const html = await page.text();
+      const pick = (prop) => {
+        const m =
+          html.match(new RegExp(`property=["']${prop}["']\\s+content=["']([^"']+)["']`, "i")) ||
+          html.match(new RegExp(`content=["']([^"']+)["']\\s+property=["']${prop}["']`, "i"));
+        return m ? m[1].replace(/&amp;/g, "&") : "";
+      };
+      const ogImage = pick("og:image");
+      const ogTitle = pick("og:title");
+      if (ogImage || ogTitle) {
+        return res.json({
+          title: ogTitle || "Facebook Video",
+          channel: "Facebook",
+          views: "--",
+          uploadDate: "--",
+          duration: "--",
+          seconds: 0,
+          url: videoUrl,
+          videoId: "",
+          thumbnail: ogImage || "",
+        });
+      }
+    } catch (err) {
+      console.error("[API:/api/info] Facebook og scrape failed:", err.message);
+    }
+  }
+
   if (apiKey && ytId) {
     try {
       const apiUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${ytId}&key=${apiKey}`;
@@ -428,9 +466,14 @@ app.get("/api/health", async (_req, res) => {
 //   /api/debug?url=https://youtu.be/ID&format=any&quality=best
 app.get("/api/debug", async (req, res) => {
   const url = req.query.url;
-  const format = req.query.format || "mp4";   // app default; UI default is "any"
-  const quality = req.query.quality || "720";
+  const format = req.query.format || "any";   // MeTube UI default
+  const quality = req.query.quality || "best";
   const out = { metube: METUBE, tried: { url, format, quality } };
+
+  const vid = extractYouTubeId(url);
+  const fbId = extractFacebookId(url);
+  out.ids = { youtube: vid, facebook: fbId };
+  out.supported = isSupported(url);
 
   try {
     const v = await fetch(`${METUBE}/version`, { signal: AbortSignal.timeout(10000) });
@@ -445,7 +488,6 @@ app.get("/api/debug", async (req, res) => {
     out.cookie_status_error = err.message;
   }
 
-  const vid = extractYouTubeId(url);
   try {
     out.add = await metube("/add", {
       method: "POST",
@@ -456,11 +498,36 @@ app.get("/api/debug", async (req, res) => {
     out.add_error = err.message;
   }
 
-  await sleep(8000);
+  await sleep(10000);
   try {
     const h = await metube("/history");
     const all = [...(h.done || []), ...(h.queue || []), ...(h.pending || [])];
-    out.item = all.find((i) => (vid ? i.id === vid : i.url === url)) || null;
+    out.history_count = all.length;
+    const matched =
+      all.find((i) => (vid && i.id === vid) || (fbId && i.id === fbId) || i.url === url) || null;
+    out.item = matched;
+    out.latest = [...all].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))[0] || null;
+
+    // The step the app does next: fetch the finished file from MeTube. A 200
+    // here means the download link the frontend is handed is valid.
+    const target = matched || out.latest;
+    if (target?.filename) {
+      const dir = target.download_type === "audio" ? "audio_download" : "download";
+      try {
+        const fr = await fetch(`${METUBE}/${dir}/${encodeURIComponent(target.filename)}`, {
+          method: "HEAD",
+        });
+        out.file_check = {
+          dir,
+          name: target.filename,
+          http: fr.status,
+          content_type: fr.headers.get("content-type"),
+          content_length: fr.headers.get("content-length"),
+        };
+      } catch (err) {
+        out.file_check_error = err.message;
+      }
+    }
   } catch (err) {
     out.history_error = err.message;
   }
