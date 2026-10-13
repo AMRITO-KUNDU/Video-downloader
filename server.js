@@ -112,12 +112,16 @@ function formatViews(n) {
 
 function decodeEntities(s) {
   return String(s || "")
-    .replace(/&amp;/g, "&")
+    // Numeric references first — Facebook escapes non-Latin text this way
+    // (&#x9aa; = Bengali, &#xb7; = ·), which a named-only decoder leaves raw.
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&nbsp;/g, " ")
     .replace(/&quot;/g, '"')
-    .replace(/&#0?39;/g, "'")
-    .replace(/&#x27;/gi, "'")
+    .replace(/&apos;/g, "'")
     .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
 }
 
 // ======================
@@ -270,13 +274,22 @@ app.get("/api/info", async (req, res) => {
       let title =
         meta("og:title") ||
         decodeEntities((html.match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1] || "").trim();
-      // Facebook prefixes reel titles with "NNNK views · NNN reactions | ".
-      title = title
-        .replace(/^[\d.,KMB]+\s*views\s*·\s*[\d.,KMB]+\s*reactions\s*\|\s*/i, "")
-        .trim();
+      let channel = meta("og:site_name") || "Facebook";
+
+      // Facebook builds reel titles as "<views> · <reactions> | <caption> | <page>".
+      // Strip the leading counter and take the trailing segment as the channel.
+      const FB_PREFIX = /^[\d.,KMB]+\s*views\s*·\s*[\d.,KMB]+\s*reactions\s*\|\s*/i;
+      if (FB_PREFIX.test(title)) {
+        title = title.replace(FB_PREFIX, "").trim();
+        const parts = title.split(" | ");
+        if (parts.length > 1) {
+          const page = parts.pop().trim();
+          title = parts.join(" | ").trim();
+          if (page) channel = page;
+        }
+      }
 
       const ogImage = meta("og:image");
-      const ogSite = meta("og:site_name");
 
       let seconds = 0;
       const ms =
@@ -298,7 +311,7 @@ app.get("/api/info", async (req, res) => {
       if (title || ogImage) {
         return res.json({
           title: title || "Facebook Video",
-          channel: ogSite || "Facebook",
+          channel,
           views: "--",
           uploadDate,
           duration: durationLabel(seconds),
