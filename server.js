@@ -434,7 +434,16 @@ app.get("/api/file", async (req, res) => {
       return res.status(502).send("File not available");
     }
     res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/octet-stream");
-    res.setHeader("Content-Disposition", `attachment; filename="${name.replace(/[\r\n"]/g, "")}"`);
+
+    // A non-ASCII filename (Bengali/Hindi/Arabic titles, · and ｜) makes Node
+    // throw ERR_INVALID_CHAR on this header and fail the whole download. Send
+    // an ASCII fallback plus the RFC 5987 UTF-8 form, which browsers prefer.
+    const asciiName =
+      name.replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "").slice(0, 180) || "download";
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(name)}`
+    );
     const { Readable } = await import("node:stream");
     Readable.fromWeb(upstream.body).pipe(res);
   } catch (err) {
