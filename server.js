@@ -110,6 +110,16 @@ function formatViews(n) {
   return `${n} views`;
 }
 
+function decodeEntities(s) {
+  return String(s || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&#x27;/gi, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
 // ======================
 // MeTube download side
 // ======================
@@ -235,8 +245,8 @@ app.get("/api/info", async (req, res) => {
   const defaultThumbnail = ytId ? `https://img.youtube.com/vi/${ytId}/hqdefault.jpg` : "";
   const apiKey = process.env.YOUTUBE_API_KEY;
 
-  // Facebook: no YouTube API and noembed rarely has the image — scrape the
-  // page's Open Graph tags (crawler UA) for a real title + thumbnail.
+  // Facebook: no YouTube API — scrape the page's Open Graph / embedded
+  // metadata for a real title, thumbnail, and (best effort) duration + date.
   if (isFacebook(videoUrl)) {
     try {
       const page = await fetch(videoUrl, {
@@ -247,29 +257,59 @@ app.get("/api/info", async (req, res) => {
         signal: AbortSignal.timeout(15000),
       });
       const html = await page.text();
-      const pick = (prop) => {
+
+      // Meta tags come in either attribute order; capture up to the closing
+      // double quote so an apostrophe inside the content can't truncate it.
+      const meta = (prop) => {
         const m =
-          html.match(new RegExp(`property=["']${prop}["']\\s+content=["']([^"']+)["']`, "i")) ||
-          html.match(new RegExp(`content=["']([^"']+)["']\\s+property=["']${prop}["']`, "i"));
-        return m ? m[1].replace(/&amp;/g, "&") : "";
+          html.match(new RegExp(`property=["']${prop}["'][^>]*?content="([^"]*)"`, "i")) ||
+          html.match(new RegExp(`content="([^"]*)"[^>]*?property=["']${prop}["']`, "i"));
+        return m ? decodeEntities(m[1]).trim() : "";
       };
-      const ogImage = pick("og:image");
-      const ogTitle = pick("og:title");
-      if (ogImage || ogTitle) {
+
+      let title =
+        meta("og:title") ||
+        decodeEntities((html.match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1] || "").trim();
+      // Facebook prefixes reel titles with "NNNK views · NNN reactions | ".
+      title = title
+        .replace(/^[\d.,KMB]+\s*views\s*·\s*[\d.,KMB]+\s*reactions\s*\|\s*/i, "")
+        .trim();
+
+      const ogImage = meta("og:image");
+      const ogSite = meta("og:site_name");
+
+      let seconds = 0;
+      const ms =
+        html.match(/"playable_duration_in_ms":(\d+)/) || html.match(/"video_duration":(\d+)/);
+      const sec = html.match(/"duration_in_sec":(\d+)/);
+      if (ms) seconds = Math.round(parseInt(ms[1], 10) / 1000);
+      else if (sec) seconds = parseInt(sec[1], 10);
+
+      let uploadDate = "--";
+      const created =
+        html.match(/"creation_time":(\d{10})/) || html.match(/"publish_time":(\d{10})/);
+      if (created) {
+        const d = new Date(parseInt(created[1], 10) * 1000);
+        if (d.getFullYear() > 2004 && d.getFullYear() < 2100) {
+          uploadDate = d.toISOString().slice(0, 10);
+        }
+      }
+
+      if (title || ogImage) {
         return res.json({
-          title: ogTitle || "Facebook Video",
-          channel: "Facebook",
+          title: title || "Facebook Video",
+          channel: ogSite || "Facebook",
           views: "--",
-          uploadDate: "--",
-          duration: "--",
-          seconds: 0,
+          uploadDate,
+          duration: durationLabel(seconds),
+          seconds,
           url: videoUrl,
           videoId: "",
           thumbnail: ogImage || "",
         });
       }
     } catch (err) {
-      console.error("[API:/api/info] Facebook og scrape failed:", err.message);
+      console.error("[API:/api/info] Facebook metadata scrape failed:", err.message);
     }
   }
 
@@ -483,6 +523,14 @@ app.get("/api/debug", async (req, res) => {
   const fbId = extractFacebookId(url);
   out.ids = { youtube: vid, facebook: fbId };
   out.supported = isSupported(url);
+
+  // What the Downloader preview would show for this link.
+  try {
+    const ir = await fetch(`http://127.0.0.1:${PORT}/api/info?url=${encodeURIComponent(url)}`);
+    out.info = await ir.json();
+  } catch (err) {
+    out.info_error = err.message;
+  }
 
   try {
     const v = await fetch(`${METUBE}/version`, { signal: AbortSignal.timeout(10000) });

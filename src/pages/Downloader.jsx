@@ -273,9 +273,11 @@ export default function Downloader() {
             <div className="mt-5 nb-card overflow-hidden">
               <div className="relative aspect-video w-full border-b-2 border-black bg-black">
                 <Image src={video.thumbnail} alt={video.title} className="h-full w-full" fittingType="fill" />
-                <span className="absolute bottom-2 right-2 border-2 border-black bg-black px-2 py-0.5 text-xs font-bold text-white">
-                  {video.duration}
-                </span>
+                {video.duration && video.duration !== "--" && (
+                  <span className="absolute bottom-2 right-2 border-2 border-black bg-black px-2 py-0.5 text-xs font-bold text-white">
+                    {video.duration}
+                  </span>
+                )}
               </div>
               <div className="p-4">
                 <h3 className="font-display text-lg font-extrabold leading-tight text-black">{video.title}</h3>
