@@ -67,7 +67,7 @@ export default function Chat() {
       } catch (e) {
         update(id, {
           detecting: false,
-          text: "I couldn't fetch that video. Make sure it is a valid, public YouTube link.",
+          text: "I couldn't fetch that video. Make sure it is a valid, public YouTube or Facebook link.",
         });
       }
       return;

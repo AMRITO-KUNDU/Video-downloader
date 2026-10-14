@@ -52,9 +52,11 @@ export default function SearchResultCard({ video }) {
               <Play className="h-4 w-4 fill-black text-black" />
             </div>
           </div>
-          <span className="absolute bottom-1.5 right-1.5 border-2 border-black bg-black px-1.5 py-0.5 text-[10px] font-bold text-white">
-            {video.duration}
-          </span>
+          {video.duration && video.duration !== "--" && (
+            <span className="absolute bottom-1.5 right-1.5 border-2 border-black bg-black px-1.5 py-0.5 text-[10px] font-bold text-white">
+              {video.duration}
+            </span>
+          )}
         </button>
 
         <div className="flex flex-1 flex-col p-3.5">

@@ -458,6 +458,26 @@ app.get("/api/direct-url", async (req, res) => {
       });
       if (finished) {
         const audio = body.download_type === "audio";
+        const dir = audio ? "audio_download" : "download";
+        // Confirm the file is actually servable before telling the UI the
+        // download started. Otherwise a broken hand-off shows "Download Started"
+        // and then silently delivers nothing. 405/501 mean HEAD isn't supported
+        // here, which is not a failure — only a real error blocks.
+        try {
+          const check = await fetch(
+            `${METUBE}/${dir}/${encodeURIComponent(finished.filename)}`,
+            { method: "HEAD" }
+          );
+          if (check.status >= 400 && check.status !== 405 && check.status !== 501) {
+            return res.status(502).json({
+              error: `MeTube finished but the file is not downloadable (HTTP ${check.status})`,
+            });
+          }
+        } catch (err) {
+          return res.status(502).json({
+            error: `Could not verify the finished file: ${err.message}`,
+          });
+        }
         return res.json({
           success: true,
           directUrl: `/api/file?name=${encodeURIComponent(finished.filename)}&type=${audio ? "audio" : "video"}`,
@@ -479,6 +499,10 @@ app.get("/api/file", async (req, res) => {
   const { name, type } = req.query;
   if (!name || typeof name !== "string") {
     return res.status(400).send("name required");
+  }
+  // Only ever a bare filename — never a path. Blocks traversal attempts.
+  if (name.includes("/") || name.includes("\\") || name.includes("..")) {
+    return res.status(400).send("invalid name");
   }
   const dir = type === "audio" ? "audio_download" : "download";
   try {

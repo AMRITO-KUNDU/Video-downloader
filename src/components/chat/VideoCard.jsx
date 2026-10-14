@@ -51,9 +51,11 @@ export default function VideoCard({ video }) {
             <Play className="h-6 w-6 fill-black text-black" />
           </div>
         </div>
-        <span className="absolute bottom-2 right-2 border-2 border-black bg-black px-2 py-0.5 text-xs font-bold text-white">
-          {video.duration}
-        </span>
+        {video.duration && video.duration !== "--" && (
+          <span className="absolute bottom-2 right-2 border-2 border-black bg-black px-2 py-0.5 text-xs font-bold text-white">
+            {video.duration}
+          </span>
+        )}
       </button>
       <div className="p-4">
         <h3 className="font-display text-lg font-extrabold leading-tight text-black">{video.title}</h3>
