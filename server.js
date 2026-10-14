@@ -24,8 +24,6 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 
 let METUBE = (process.env.METUBE_URL || "").trim().replace(/\/+$/, "");
 // Accept a bare host (e.g. "my-metube.up.railway.app") and add the scheme,
@@ -40,40 +38,6 @@ const app = express();
 app.use(express.json());
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// yt-dlp — the same engine MeTube uses — for metadata on sites the YouTube API
-// can't cover (Facebook etc.), including the duration and upload date that page
-// scraping can't give reliably. Optional: if the binary isn't present every
-// probe returns null and callers fall back to scraping.
-const YTDLP = process.env.YTDLP_PATH || "yt-dlp";
-const execFileAsync = promisify(execFile);
-
-function formatYtDate(d) {
-  if (!d || typeof d !== "string" || d.length !== 8) return "--";
-  return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
-}
-
-async function probeWithYtDlp(url, timeoutMs = 25000) {
-  try {
-    // execFile (not a shell) — the URL is an argv entry, never interpreted.
-    const { stdout } = await execFileAsync(
-      YTDLP,
-      [
-        "--dump-single-json",
-        "--no-warnings",
-        "--no-playlist",
-        "--skip-download",
-        "--ignore-no-formats-error",
-        url,
-      ],
-      { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 }
-    );
-    return JSON.parse(stdout);
-  } catch (err) {
-    console.warn("[yt-dlp] probe failed:", String(err.message || err).split("\n")[0]);
-    return null;
-  }
-}
 
 // ======================
 // Helpers
@@ -284,26 +248,6 @@ app.get("/api/info", async (req, res) => {
   const ytId = extractYouTubeId(videoUrl);
   const defaultThumbnail = ytId ? `https://img.youtube.com/vi/${ytId}/hqdefault.jpg` : "";
   const apiKey = process.env.YOUTUBE_API_KEY;
-
-  // Non-YouTube sites (e.g. Facebook): ask yt-dlp for real metadata first — it
-  // reports duration and upload date, which the page scrape can't reliably. If
-  // yt-dlp is unavailable or fails, the scrape below still runs.
-  if (!isYouTube(videoUrl)) {
-    const info = await probeWithYtDlp(videoUrl);
-    if (info) {
-      return res.json({
-        title: info.title || "Video",
-        channel: info.uploader || info.channel || "Video Creator",
-        views: formatViews(info.view_count),
-        uploadDate: formatYtDate(info.upload_date),
-        duration: durationLabel(info.duration),
-        seconds: Number.isFinite(info.duration) ? info.duration : 0,
-        url: videoUrl,
-        videoId: "",
-        thumbnail: info.thumbnail || "",
-      });
-    }
-  }
 
   // Facebook: no YouTube API — scrape the page's Open Graph / embedded
   // metadata for a real title, thumbnail, and (best effort) duration + date.
