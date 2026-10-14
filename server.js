@@ -24,6 +24,17 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
+import { Readable } from "node:stream";
+
+// Facebook resolution: one call -> direct media URL + real duration. Loaded
+// defensively, so a package problem can never stop the app starting — it just
+// falls back to page scraping / MeTube.
+let getFbVideoInfo = null;
+try {
+  ({ getFbVideoInfo } = await import("fb-downloader-scrapper"));
+} catch (err) {
+  console.warn("[fb] fb-downloader-scrapper unavailable:", err.message);
+}
 
 let METUBE = (process.env.METUBE_URL || "").trim().replace(/\/+$/, "");
 // Accept a bare host (e.g. "my-metube.up.railway.app") and add the scheme,
@@ -122,6 +133,49 @@ function decodeEntities(s) {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&");
+}
+
+// Facebook's CDN only — vets a `src` before streaming it, so /api/file can
+// never be used as an open proxy.
+function isFbCdn(u) {
+  try {
+    const host = new URL(u).hostname.toLowerCase();
+    return host === "fbcdn.net" || host.endsWith(".fbcdn.net");
+  } catch {
+    return false;
+  }
+}
+
+// Stream an upstream response to the client with a safe, correct filename.
+function streamTo(res, upstream, name) {
+  res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/octet-stream");
+  // A non-ASCII filename (Bengali/Hindi/Arabic titles, · and ｜) makes Node
+  // throw ERR_INVALID_CHAR on this header and fail the whole download. Send an
+  // ASCII fallback plus the RFC 5987 UTF-8 form, which browsers prefer.
+  const asciiName =
+    String(name).replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "").slice(0, 180) || "download";
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(name)}`
+  );
+  Readable.fromWeb(upstream.body).pipe(res);
+}
+
+// Facebook titles arrive as "<views> · <reactions> | <caption> | <page>".
+function cleanFbTitle(raw) {
+  let title = decodeEntities(raw || "").trim();
+  let channel = "";
+  const FB_PREFIX = /^[\d.,KMB]+\s*views\s*·\s*[\d.,KMB]+\s*reactions\s*\|\s*/i;
+  if (FB_PREFIX.test(title)) {
+    title = title.replace(FB_PREFIX, "").trim();
+    const parts = title.split(" | ");
+    if (parts.length > 1) {
+      const page = parts.pop().trim();
+      title = parts.join(" | ").trim();
+      channel = page;
+    }
+  }
+  return { title, channel };
 }
 
 // ======================
@@ -252,6 +306,31 @@ app.get("/api/info", async (req, res) => {
   // Facebook: no YouTube API — scrape the page's Open Graph / embedded
   // metadata for a real title, thumbnail, and (best effort) duration + date.
   if (isFacebook(videoUrl)) {
+    // Preferred: fb-downloader resolves the page in one call and reports a real
+    // duration. Falls through to the scrape below if it fails.
+    if (getFbVideoInfo) {
+      try {
+        const fb = await getFbVideoInfo(videoUrl);
+        if (fb && (fb.title || fb.thumbnail)) {
+          const { title, channel } = cleanFbTitle(fb.title);
+          const secs = Number.isFinite(fb.duration_ms) ? Math.round(fb.duration_ms / 1000) : 0;
+          return res.json({
+            title: title || "Facebook Video",
+            channel: channel || "Facebook",
+            views: "--",
+            uploadDate: "--",
+            duration: durationLabel(secs),
+            seconds: secs,
+            url: videoUrl,
+            videoId: "",
+            thumbnail: fb.thumbnail || "",
+          });
+        }
+      } catch (err) {
+        console.warn("[API:/api/info] fb-downloader failed:", err.message);
+      }
+    }
+
     try {
       const page = await fetch(videoUrl, {
         headers: {
@@ -413,6 +492,31 @@ app.get("/api/direct-url", async (req, res) => {
     return res.status(400).json({ error: "format_id required" });
   }
 
+  // Facebook: fb-downloader resolves a direct media URL, so stream that straight
+  // through — no MeTube download-and-poll. Audio still uses MeTube, and so does
+  // anything fb-downloader can't resolve (private videos, etc.).
+  const wantsAudio = ["mp3", "audio", "audio_mp3"].includes(String(format_id));
+  if (isFacebook(url) && getFbVideoInfo && !wantsAudio) {
+    try {
+      const fb = await getFbVideoInfo(url);
+      const link = fb && (fb.hd || fb.sd);
+      if (link) {
+        const { title } = cleanFbTitle(fb.title);
+        const base = (title || "facebook-video").replace(/[\\/:*?"<>|]/g, "").slice(0, 80).trim();
+        const nice = `${base || "facebook-video"}.mp4`;
+        return res.json({
+          success: true,
+          directUrl: `/api/file?src=${encodeURIComponent(link)}&name=${encodeURIComponent(nice)}`,
+          filename: nice,
+          ext: "mp4",
+          format_id,
+        });
+      }
+    } catch (err) {
+      console.warn("[/api/direct-url] fb-downloader failed:", err.message);
+    }
+  }
+
   const body = toMeTubeBody(format_id, url);
 
   // MeTube stores yt-dlp's NORMALIZED url and numeric id, which can differ from
@@ -496,7 +600,28 @@ app.get("/api/direct-url", async (req, res) => {
 });
 
 app.get("/api/file", async (req, res) => {
-  const { name, type } = req.query;
+  const { name, type, src } = req.query;
+
+  // Facebook: the app resolved a signed fbcdn URL itself. Stream it here rather
+  // than handing the URL to the browser — that dodges cross-origin limits and
+  // gives the file a proper name. Restricted to Facebook's CDN (never an open
+  // proxy).
+  if (typeof src === "string" && src) {
+    if (!isFbCdn(src)) {
+      return res.status(400).send("invalid src");
+    }
+    try {
+      const upstream = await fetch(src, { signal: AbortSignal.timeout(120000) });
+      if (!upstream.ok || !upstream.body) {
+        return res.status(502).send("File not available");
+      }
+      return streamTo(res, upstream, typeof name === "string" && name ? name : "facebook-video.mp4");
+    } catch (err) {
+      console.error("[/api/file] src ERROR:", err.message);
+      return res.status(500).send("Failed to fetch file");
+    }
+  }
+
   if (!name || typeof name !== "string") {
     return res.status(400).send("name required");
   }
@@ -510,22 +635,10 @@ app.get("/api/file", async (req, res) => {
     if (!upstream.ok || !upstream.body) {
       return res.status(502).send("File not available");
     }
-    res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/octet-stream");
-
-    // A non-ASCII filename (Bengali/Hindi/Arabic titles, · and ｜) makes Node
-    // throw ERR_INVALID_CHAR on this header and fail the whole download. Send
-    // an ASCII fallback plus the RFC 5987 UTF-8 form, which browsers prefer.
-    const asciiName =
-      name.replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "").slice(0, 180) || "download";
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(name)}`
-    );
-    const { Readable } = await import("node:stream");
-    Readable.fromWeb(upstream.body).pipe(res);
+    return streamTo(res, upstream, name);
   } catch (err) {
     console.error("[/api/file] ERROR:", err.message);
-    res.status(500).send("Failed to fetch file");
+    return res.status(500).send("Failed to fetch file");
   }
 });
 
