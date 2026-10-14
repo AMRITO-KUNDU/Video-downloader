@@ -1,8 +1,11 @@
 import { X, ExternalLink } from "lucide-react";
-import { extractYouTubeId } from "@/lib/videoService";
+import { extractYouTubeId, isFacebookUrl } from "@/lib/videoService";
 
 export default function PlayerModal({ video, onClose }) {
-  const id = video?.videoId || extractYouTubeId(video?.url || "");
+  const url = video?.url || "";
+  const ytId = video?.videoId || extractYouTubeId(url);
+  const isFb = isFacebookUrl(url);
+  const openLabel = isFb ? "Open on Facebook" : ytId ? "Open on YouTube" : "Open original";
 
   return (
     <div
@@ -26,32 +29,45 @@ export default function PlayerModal({ video, onClose }) {
         </div>
 
         <div className="aspect-video w-full bg-black">
-          {id ? (
+          {ytId ? (
             <iframe
-              src={`https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0`}
+              src={`https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&rel=0`}
               title={video?.title}
               className="h-full w-full"
               allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
               allowFullScreen
               frameBorder="0"
             />
+          ) : isFb ? (
+            // Facebook has no embed like YouTube, so play the real file through
+            // our own proxy instead of showing a dead "no preview" message.
+            <video
+              src={`/api/stream?url=${encodeURIComponent(url)}`}
+              title={video?.title}
+              className="h-full w-full"
+              controls
+              autoPlay
+              playsInline
+            />
           ) : (
             <div className="grid h-full place-items-center px-4 text-center text-sm font-bold text-white/80">
-              No embeddable preview for this link. Open it on YouTube to watch.
+              No embeddable preview for this link.
             </div>
           )}
         </div>
 
         <div className="flex items-center justify-between gap-2 border-t-2 border-black bg-white px-4 py-3">
           <span className="truncate text-sm font-bold text-black">{video?.channel}</span>
-          <a
-            href={video?.url}
-            target="_blank"
-            rel="noreferrer"
-            className="nb-btn-dark px-3 py-1.5 text-xs"
-          >
-            <ExternalLink className="h-3.5 w-3.5" strokeWidth={3} /> Open on YouTube
-          </a>
+          {url && (
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="nb-btn-dark px-3 py-1.5 text-xs"
+            >
+              <ExternalLink className="h-3.5 w-3.5" strokeWidth={3} /> {openLabel}
+            </a>
+          )}
         </div>
       </div>
     </div>

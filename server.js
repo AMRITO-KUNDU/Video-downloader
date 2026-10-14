@@ -178,6 +178,22 @@ function cleanFbTitle(raw) {
   return { title, channel };
 }
 
+// A <video> element makes many Range requests, so resolve the signed fbcdn link
+// once and reuse it briefly rather than re-hitting Facebook on every request.
+const fbLinkCache = new Map();
+async function resolveFbStream(url) {
+  const now = Date.now();
+  const hit = fbLinkCache.get(url);
+  if (hit && now - hit.at < 10 * 60 * 1000) return hit.link;
+  const fb = await getFbVideoInfo(url);
+  const link = fb && (fb.hd || fb.sd);
+  if (link) {
+    if (fbLinkCache.size > 50) fbLinkCache.clear();
+    fbLinkCache.set(url, { link, at: now });
+  }
+  return link;
+}
+
 // ======================
 // MeTube download side
 // ======================
@@ -652,6 +668,36 @@ app.get("/api/file", async (req, res) => {
   } catch (err) {
     console.error("[/api/file] ERROR:", err.message);
     return res.status(500).send("Failed to fetch file");
+  }
+});
+
+// Inline playback for Facebook (a native <video> in the player modal). Facebook
+// has no embed like YouTube, so resolve the signed fbcdn URL here — from the
+// same IP that asked for it — and proxy the bytes, forwarding Range so seeking
+// works. No Content-Disposition, so it plays instead of saving.
+app.get("/api/stream", async (req, res) => {
+  const url = req.query.url;
+  if (!isFacebook(url) || !getFbVideoInfo) {
+    return res.status(400).send("unsupported");
+  }
+  try {
+    const link = await resolveFbStream(url);
+    if (!link) return res.status(404).send("no stream");
+
+    const headers = {};
+    if (req.headers.range) headers.Range = req.headers.range;
+    const upstream = await fetch(link, { headers });
+
+    res.status(upstream.status);
+    for (const h of ["content-type", "content-length", "content-range", "accept-ranges"]) {
+      const v = upstream.headers.get(h);
+      if (v) res.setHeader(h, v);
+    }
+    if (!upstream.body) return res.end();
+    Readable.fromWeb(upstream.body).pipe(res);
+  } catch (err) {
+    console.error("[/api/stream] ERROR:", err.message);
+    res.status(500).send("Failed to stream");
   }
 });
 

@@ -11,6 +11,13 @@ export function isVideoUrl(text) {
 }
 
 /**
+ * Check if a URL points at Facebook
+ */
+export function isFacebookUrl(url) {
+  return /(facebook\.com|fb\.watch|fb\.me)/i.test(String(url || ""));
+}
+
+/**
  * Extract YouTube video ID from a URL
  */
 export function extractYouTubeId(text) {

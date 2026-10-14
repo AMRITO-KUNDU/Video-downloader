@@ -4,6 +4,7 @@ import { Image } from "@/components/ui/image";
 import { apiClient } from "@/api/apiClient";
 import MobileTopBar from "@/components/layout/MobileTopBar";
 import PlayerModal from "@/components/chat/PlayerModal";
+import { isFacebookUrl } from "@/lib/videoService";
 import moment from "moment";
 
 export default function Library() {
@@ -78,7 +79,7 @@ export default function Library() {
                         target="_blank"
                         rel="noreferrer"
                         className="grid h-8 w-8 place-items-center border-2 border-black bg-white nb-press"
-                        title="Open on YouTube"
+                        title={isFacebookUrl(item.url) ? "Open on Facebook" : "Open on YouTube"}
                       >
                         <ExternalLink className="h-3.5 w-3.5" strokeWidth={2.5} />
                       </a>
