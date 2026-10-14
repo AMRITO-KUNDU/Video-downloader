@@ -22,7 +22,6 @@ function safeFilename(title, ext) {
   return `${base || (ext === "mp3" ? "audio" : "video")}.${ext}`;
 }
 
-const QUALITY_HEIGHTS = ["1080p", "720p", "480p", "360p"];
 const AUDIO_BITRATES = ["320kbps", "256kbps", "192kbps", "128kbps"];
 
 export default function Downloader() {
@@ -34,7 +33,7 @@ export default function Downloader() {
   const [loadingFormats, setLoadingFormats] = useState(false);
   const [formats, setFormats] = useState(null);
   const [formatType, setFormatType] = useState("mp4"); // mp4, mp3, or custom formats
-  const [quality, setQuality] = useState("720p");
+  const [quality, setQuality] = useState("");
   const [audioBitrate, setAudioBitrate] = useState("192kbps");
   const [error, setError] = useState("");
   const [customFormatError, setCustomFormatError] = useState("");
@@ -50,53 +49,35 @@ export default function Downloader() {
   // Check if we have video data passed from search results
   const hasVideoData = location.state?.video;
 
+  // Options come straight from what the server returned, so the UI only ever
+  // shows formats that really exist. Facebook (fb-downloader) has just HD/SD
+  // and no audio; YouTube has its own list.
+  const allFormats = formats?.formats || [];
+  const videoFormats = allFormats.filter((f) => f.has_video && f.type === "video+audio");
+  const audioFormats = allFormats.filter((f) => f.type === "audio-only");
+  const hasVideoAudio = videoFormats.length > 0;
+  const hasAudioOnly = audioFormats.length > 0;
+  const activeQualityId = quality || videoFormats[0]?.format_id || "";
+  const activeQualityLabel =
+    videoFormats.find((f) => f.format_id === activeQualityId)?.label || "MP4";
+
   // Get selected format based on current UI selections
   const getSelectedFormat = () => {
     if (!formats?.formats) return null;
-    
-    if (formatType === "custom") {
-      // Find the first format for custom selection
-      return formats.formats[0] || null;
-    }
-    
+
     if (formatType === "mp4") {
-      // Find the best video+audio format for the selected quality
-      const height = parseInt(quality, 10) || 720;
-      const videoFormats = formats.formats.filter(f => f.has_video && f.type === 'video+audio');
-      
-      // Sort by height (descending) and find closest match
-      videoFormats.sort((a, b) => (b.height || 0) - (a.height || 0));
-      
-      // Find the highest quality that is <= requested height
-      for (const fmt of videoFormats) {
-        if ((fmt.height || 0) <= height) {
-          return fmt;
-        }
-      }
-      
-      // If no exact match, return the highest quality video+audio
-      return videoFormats[0] || null;
+      return videoFormats.find((f) => f.format_id === activeQualityId) || videoFormats[0] || null;
     }
-    
+
     if (formatType === "mp3") {
-      // Find audio-only format
       const bitrate = parseInt(audioBitrate, 10) || 192;
-      const audioFormats = formats.formats.filter(f => f.type === 'audio-only');
-      
-      // Sort by bitrate (descending)
-      audioFormats.sort((a, b) => (b.abr || 0) - (a.abr || 0));
-      
-      // Find closest match
-      for (const fmt of audioFormats) {
-        if ((fmt.abr || 0) <= bitrate) {
-          return fmt;
-        }
+      const sorted = [...audioFormats].sort((a, b) => (b.abr || 0) - (a.abr || 0));
+      for (const fmt of sorted) {
+        if ((fmt.abr || 0) <= bitrate) return fmt;
       }
-      
-      // Return highest quality audio
-      return audioFormats[0] || null;
+      return sorted[0] || null;
     }
-    
+
     return null;
   };
 
@@ -187,7 +168,10 @@ export default function Downloader() {
 
         toast({
           title: "Download Started",
-          description: formatType === "mp3" ? `Downloading ${audioBitrate} MP3` : `Downloading ${quality} MP4`,
+          description:
+            formatType === "mp3"
+              ? `Downloading ${audioBitrate} MP3`
+              : `Downloading ${activeQualityLabel} MP4`,
         });
 
         // Reset after a short moment
@@ -214,14 +198,10 @@ export default function Downloader() {
   };
 
   const statusLabel = {
-    idle: formatType === "mp3" ? `Download ${audioBitrate} MP3` : `Download ${quality} MP4`,
+    idle: formatType === "mp3" ? `Download ${audioBitrate} MP3` : `Download ${activeQualityLabel} MP4`,
     extracting: "Extracting…",
     done: "Saved",
   }[dlPhase];
-
-  // Check if we have video+audio formats available
-  const hasVideoAudio = formats?.formats?.some(f => f.type === 'video+audio');
-  const hasAudioOnly = formats?.formats?.some(f => f.type === 'audio-only');
 
   return (
     <div className="flex h-full flex-col">
@@ -306,6 +286,7 @@ export default function Downloader() {
 
                 {formats && !loadingFormats && (
                   <>
+                    {hasVideoAudio && hasAudioOnly && (
                     <div className="mt-4">
                       <div className="mb-2 text-[11px] font-bold uppercase tracking-widest text-black/50">Format</div>
                       <div className="flex gap-2">
@@ -337,23 +318,24 @@ export default function Downloader() {
                         )}
                       </div>
                     </div>
+                    )}
 
                     {formatType === "mp4" && hasVideoAudio && (
                       <div className="mt-4">
                         <div className="mb-2 text-[11px] font-bold uppercase tracking-widest text-black/50">Quality</div>
                         <div className="flex flex-wrap gap-2">
-                          {QUALITY_HEIGHTS.map((q) => (
+                          {videoFormats.map((f) => (
                             <button
-                              key={q}
-                              onClick={() => !isDownloading && setQuality(q)}
+                              key={f.format_id}
+                              onClick={() => !isDownloading && setQuality(f.format_id)}
                               disabled={isDownloading}
                               className={cn(
                                 "border-2 border-black px-3 py-2 text-xs font-bold uppercase nb-press",
-                                quality === q ? "bg-brand shadow-[3px_3px_0_0_#000]" : "bg-white",
+                                activeQualityId === f.format_id ? "bg-brand shadow-[3px_3px_0_0_#000]" : "bg-white",
                                 isDownloading && "opacity-50"
                               )}
                             >
-                              {q}
+                              {f.label}
                             </button>
                           ))}
                         </div>
@@ -426,7 +408,7 @@ export default function Downloader() {
                 </button>
 
                 <p className="mt-2 text-center text-[11px] font-medium text-black/45">
-                  Direct download via MeTube.
+                  Direct download.
                 </p>
               </div>
             </div>

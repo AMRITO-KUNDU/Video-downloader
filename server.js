@@ -193,6 +193,14 @@ const FORMATS = [
   { format_id: "mp3", label: "MP3 (320 kbps)", height: null, abr: 320, ext: "mp3", type: "audio-only", has_video: false, has_audio: true },
 ];
 
+// What Facebook actually offers via fb-downloader: two video renditions (HD/SD)
+// and no audio-only stream. Reporting only these stops the UI showing choices
+// that don't exist.
+const FB_FORMATS = [
+  { format_id: "hd", label: "HD", height: 720, ext: "mp4", type: "video+audio", has_video: true, has_audio: true },
+  { format_id: "sd", label: "SD", height: 360, ext: "mp4", type: "video+audio", has_video: true, has_audio: true },
+];
+
 function toMeTubeBody(formatId, url) {
   const id = String(formatId || "720");
   if (id === "mp3" || id === "audio" || id === "audio_mp3") {
@@ -207,11 +215,13 @@ function toMeTubeBody(formatId, url) {
     return { url, download_type: "video", format: "any", quality: "best" };
   }
   const q = id.replace(/p$/, "");
+  // "max" is the UI's "Best Quality"; MeTube calls that "best".
+  const quality = q === "max" ? "best" : VIDEO_QUALITIES.includes(q) ? q : "720";
   return {
     url,
     download_type: "video",
     format: "mp4",
-    quality: VIDEO_QUALITIES.includes(q) ? q : "720",
+    quality,
   };
 }
 
@@ -480,7 +490,8 @@ app.get("/api/formats", (req, res) => {
   if (!isSupported(url)) {
     return res.status(400).json({ error: "Unsupported video URL" });
   }
-  res.json({ videoUrl: url, formats: FORMATS, total: FORMATS.length });
+  const list = isFacebook(url) ? FB_FORMATS : FORMATS;
+  res.json({ videoUrl: url, formats: list, total: list.length });
 });
 
 app.get("/api/direct-url", async (req, res) => {
@@ -499,7 +510,9 @@ app.get("/api/direct-url", async (req, res) => {
   if (isFacebook(url) && getFbVideoInfo && !wantsAudio) {
     try {
       const fb = await getFbVideoInfo(url);
-      const link = fb && (fb.hd || fb.sd);
+      // Only HD/SD exist: use the one that was picked, else the other.
+      const wantSd = String(format_id) === "sd";
+      const link = wantSd ? fb && (fb.sd || fb.hd) : fb && (fb.hd || fb.sd);
       if (link) {
         const { title } = cleanFbTitle(fb.title);
         const base = (title || "facebook-video").replace(/[\\/:*?"<>|]/g, "").slice(0, 80).trim();
