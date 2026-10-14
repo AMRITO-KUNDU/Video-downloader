@@ -7,6 +7,21 @@ import { fetchVideoInfo, isVideoUrl, fetchVideoFormats, getDirectDownloadUrl } f
 import { useToast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 
+// Build a sensible download filename. Keeps Unicode (Bengali/Hindi/Tamil titles
+// are valid filenames), drops only characters illegal on disk, avoids doubling
+// the extension, and never returns an empty base — an empty base is what made
+// the browser save a file as "mp4.mp4".
+function safeFilename(title, ext) {
+  const base = String(title || "")
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\.(mp4|mp3|webm|mkv|m4a|mov|avi)$/i, "")
+    .slice(0, 80)
+    .trim();
+  return `${base || (ext === "mp3" ? "audio" : "video")}.${ext}`;
+}
+
 const QUALITY_HEIGHTS = ["1080p", "720p", "480p", "360p"];
 const AUDIO_BITRATES = ["320kbps", "256kbps", "192kbps", "128kbps"];
 
@@ -162,7 +177,7 @@ export default function Downloader() {
         const a = document.createElement("a");
         a.href = result.directUrl;
         a.target = "_blank";
-        a.download = `${(video?.title || "video").replace(/[^\w\s-]/g, "").slice(0, 80)}.${selectedFormat.ext}`;
+        a.download = safeFilename(video?.title, selectedFormat.ext);
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
