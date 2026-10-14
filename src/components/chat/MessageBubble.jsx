@@ -30,7 +30,7 @@ export default function MessageBubble({ message }) {
         {message.text && (
           <div
             className={cn(
-              "inline-block border-2 border-black px-4 py-2.5 text-[15px] font-medium leading-relaxed shadow-[4px_4px_0_0_#000]",
+              "inline-block max-w-full break-words border-2 border-black px-4 py-2.5 text-[15px] font-medium leading-relaxed shadow-[4px_4px_0_0_#000]",
               isUser ? "bg-black text-white" : "bg-white text-black"
             )}
           >
