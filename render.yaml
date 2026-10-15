@@ -1,0 +1,29 @@
+# Render Blueprint — deploys MeTube (with its HTTP API) as a web service.
+# Put this file in the root of a Git repo, connect it in Render as a Blueprint.
+# Render sets PORT itself; MeTube reads PORT, so no PORT line is needed.
+#
+# NOTE: verify the `runtime: image` / `image:` keys against Render's current
+# Blueprint docs when you connect it — the dashboard "Deploy an existing image"
+# flow does the same thing and is the safer fallback.
+
+services:
+  - type: web
+    name: metube
+    runtime: image
+    image:
+      url: ghcr.io/alexta69/metube:latest
+    plan: starter                # a persistent disk requires a paid plan
+    healthCheckPath: /
+    disk:
+      name: metube-data
+      mountPath: /downloads       # files + queue/history + uploaded cookies persist here
+      sizeGB: 10
+    envVars:
+      - key: DOWNLOAD_DIR
+        value: /downloads
+      - key: STATE_DIR
+        value: /downloads/.metube
+      # If YouTube blocks the datacenter IP even with cookies, route via a
+      # residential proxy by uncommenting and filling this in:
+      # - key: YTDL_OPTIONS
+      #   value: '{"proxy":"http://user:pass@proxy-host:port"}'
