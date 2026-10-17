@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { ArrowUp, Mic, MicOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export default function Composer({ onSend, placeholder = "Paste a link or ask VidGrab..." }) {
+export default function Composer({ onSend, placeholder = "Paste the URL" }) {
   const [value, setValue] = useState("");
   const [listening, setListening] = useState(false);
   const [supported, setSupported] = useState(true);

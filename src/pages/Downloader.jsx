@@ -222,7 +222,7 @@ export default function Downloader() {
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleFetch()}
-                placeholder="https://youtube.com/watch?v=…  ·  or a Facebook link"
+                placeholder="Paste the URL"
                 className="w-full bg-transparent px-2 py-2.5 text-sm font-medium placeholder:text-black/40 focus:outline-none"
               />
             </div>
